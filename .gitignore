@@ -1,0 +1,38 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.turbo/
+
+# go
+runner/bin/
+*.test
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# local data
+tmp/
+*.log
