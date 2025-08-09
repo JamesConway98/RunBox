@@ -1,0 +1,240 @@
+// Package worker executes runs: container lifecycle, trace persistence and
+// terminal state.
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/jamesconway/runbox/runner/internal/config"
+	"github.com/jamesconway/runbox/runner/internal/sandbox"
+	"github.com/jamesconway/runbox/runner/internal/store"
+	"github.com/jamesconway/runbox/runner/internal/trace"
+)
+
+// Publisher fans a stamped event out to live subscribers. In M1 this is a
+// no-op; the SSE path arrives with Redis pub/sub.
+type Publisher interface {
+	Publish(ctx context.Context, runID string, event trace.Event) error
+}
+
+type noopPublisher struct{}
+
+func (noopPublisher) Publish(context.Context, string, trace.Event) error { return nil }
+
+// Executor runs a single run to completion. One is shared across all workers;
+// it holds no per-run state.
+type Executor struct {
+	cfg   *config.Config
+	store *store.Store
+	sbx   *sandbox.Sandbox
+	pub   Publisher
+	log   *slog.Logger
+}
+
+func NewExecutor(
+	cfg *config.Config, st *store.Store, sbx *sandbox.Sandbox, pub Publisher, log *slog.Logger,
+) *Executor {
+	if pub == nil {
+		pub = noopPublisher{}
+	}
+	return &Executor{cfg: cfg, store: st, sbx: sbx, pub: pub, log: log}
+}
+
+// Grace given to the agent between SIGTERM and SIGKILL, so a cancelled run can
+// still emit its final event.
+const killGrace = 3 * time.Second
+
+// Execute runs one job start to finish. It does not return an error for a run
+// that failed — a failed run is a successfully executed job whose terminal
+// status happens to be "failed". An error here means the runner itself broke.
+func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
+	started := time.Now()
+
+	timeout := time.Duration(run.TimeoutS) * time.Second
+	if timeout <= 0 {
+		timeout = e.cfg.DefaultTimeout
+	}
+	if timeout > e.cfg.MaxTimeout {
+		timeout = e.cfg.MaxTimeout
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	log := e.log.With("run_id", run.ID, "model", run.Model)
+	log.Info("run started", "timeout", timeout, "tools", run.Tools)
+
+	state := &runState{run: run, exec: e, log: log}
+
+	container, err := e.sbx.Start(runCtx, sandbox.Spec{
+		RunID:        run.ID,
+		Task:         run.Task,
+		Model:        run.Model,
+		Tools:        run.Tools,
+		SystemPrompt: run.SystemPrompt,
+		Temperature:  run.Temperature,
+		MaxTokens:    run.MaxTokens,
+		Image:        e.cfg.AgentImage,
+		MemoryMB:     e.cfg.MemoryLimitMB,
+		CPUs:         e.cfg.CPULimit,
+		PidsLimit:    e.cfg.PidsLimit,
+		Env: map[string]string{
+			"ANTHROPIC_API_KEY": e.cfg.AnthropicAPIKey,
+		},
+	})
+	if err != nil {
+		// A container that will not start is a failed run with a clear reason,
+		// never a hang.
+		log.Error("container failed to start", "err", err)
+		state.emitRunnerError(ctx, fmt.Sprintf("container failed to start: %v", err))
+		return e.finish(ctx, run.ID, store.Completion{
+			Status:     "failed",
+			Error:      fmt.Sprintf("container failed to start: %v", err),
+			DurationMS: msSince(started),
+		})
+	}
+	defer container.Remove()
+
+	streamErr := container.Stream(runCtx,
+		func(line []byte) error { return state.onLine(ctx, line) },
+		func(line string) { log.Warn("agent stderr", "line", line) },
+	)
+
+	// The container may still be alive if streaming stopped early. Stop it
+	// before reading the exit code so Wait cannot block on a live process.
+	if runCtx.Err() != nil {
+		if err := container.Kill(killGrace); err != nil {
+			log.Warn("kill failed", "err", err)
+		}
+	}
+
+	exitCode, waitErr := container.Wait(context.WithoutCancel(runCtx))
+
+	completion := state.resolve(runCtx, streamErr, waitErr, exitCode, started)
+	log.Info("run finished",
+		"status", completion.Status, "duration_ms", completion.DurationMS,
+		"events", state.seq, "exit", exitCode)
+
+	return e.finish(ctx, run.ID, completion)
+}
+
+func (e *Executor) finish(ctx context.Context, runID string, c store.Completion) error {
+	// Deliberately not tied to runCtx: a timed-out run still has to record that
+	// it timed out.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return e.store.Finish(writeCtx, runID, c)
+}
+
+// runState carries the per-run mutable bits: the sequence counter and whatever
+// the agent's final event told us.
+type runState struct {
+	run  *store.Run
+	exec *Executor
+	log  *slog.Logger
+
+	seq   int
+	final *trace.Final
+}
+
+func (s *runState) onLine(ctx context.Context, line []byte) error {
+	s.seq++
+	event, err := trace.Parse(line, s.seq)
+	if err != nil {
+		// Malformed line: record it and keep going. One bad line must not cost
+		// the run.
+		s.log.Warn("malformed agent output", "seq", s.seq, "err", err)
+		event = trace.ErrorEvent(s.seq, time.Now().UnixMilli(),
+			fmt.Sprintf("malformed agent output: %v", err))
+	}
+
+	if event.Type == trace.TypeFinal {
+		if final, err := event.DecodeFinal(); err == nil {
+			s.final = &final
+		} else {
+			s.log.Warn("undecodable final event", "err", err)
+		}
+	}
+
+	return s.persist(ctx, event)
+}
+
+func (s *runState) persist(ctx context.Context, event trace.Event) error {
+	// Writes use the parent context, not the run's: an event produced in the
+	// last moments before a timeout still belongs in the trace.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+
+	if err := s.exec.store.AppendEvent(
+		writeCtx, s.run.ID, s.run.TenantID, event.Seq, string(event.Type), event.Payload,
+	); err != nil {
+		// Losing the durable copy is worth failing the run for; the trace is
+		// the product.
+		return fmt.Errorf("persist event %d: %w", event.Seq, err)
+	}
+
+	if err := s.exec.pub.Publish(writeCtx, s.run.ID, event); err != nil {
+		// Losing the live copy is not. The client will catch up on replay.
+		s.log.Warn("publish failed", "seq", event.Seq, "err", err)
+	}
+	return nil
+}
+
+func (s *runState) emitRunnerError(ctx context.Context, message string) {
+	s.seq++
+	event := trace.ErrorEvent(s.seq, time.Now().UnixMilli(), message)
+	if err := s.persist(ctx, event); err != nil {
+		s.log.Error("could not record runner error", "err", err)
+	}
+}
+
+// resolve decides the terminal status from everything we observed.
+func (s *runState) resolve(
+	runCtx context.Context, streamErr, waitErr error, exitCode int64, started time.Time,
+) store.Completion {
+	c := store.Completion{DurationMS: msSince(started)}
+
+	switch {
+	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
+		c.Status = "timeout"
+		c.Error = "run exceeded its timeout"
+
+	case errors.Is(runCtx.Err(), context.Canceled):
+		c.Status = "cancelled"
+		c.Error = "run was cancelled"
+
+	case s.final != nil:
+		c.Status = s.final.Status
+		c.Result = s.final.Result
+		if c.Status == "" {
+			c.Status = "succeeded"
+		}
+
+	case streamErr != nil:
+		c.Status = "failed"
+		c.Error = fmt.Sprintf("stream error: %v", streamErr)
+
+	case waitErr != nil:
+		c.Status = "failed"
+		c.Error = fmt.Sprintf("wait error: %v", waitErr)
+
+	case exitCode != 0:
+		c.Status = "failed"
+		c.Error = fmt.Sprintf("agent exited with code %d", exitCode)
+
+	default:
+		// Clean exit with no final event. Rare, and worth naming precisely
+		// rather than reporting as success.
+		c.Status = "failed"
+		c.Error = "agent exited without emitting a final event"
+	}
+	return c
+}
+
+func msSince(t time.Time) int {
+	return int(time.Since(t).Milliseconds())
+}

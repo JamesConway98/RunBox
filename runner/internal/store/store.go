@@ -1,0 +1,173 @@
+// Package store is the runner's view of Postgres.
+//
+// The runner writes trace events and run state; it never reads tenant data it
+// was not handed. Claiming work uses SELECT ... FOR UPDATE SKIP LOCKED so that
+// two runner processes can safely coexist even though the deployment only runs
+// one today.
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var ErrNoWork = errors.New("no queued runs")
+
+type Run struct {
+	ID           string
+	TenantID     string
+	Task         string
+	Model        string
+	Tools        []string
+	SystemPrompt string
+	Temperature  *float64
+	TimeoutS     int
+	MaxTokens    int
+}
+
+type Store struct {
+	pool *pgxpool.Pool
+}
+
+func Open(ctx context.Context, dsn string) (*Store, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse dsn: %w", err)
+	}
+	// The runner's connection count is bounded by its worker pool plus a little
+	// headroom for the reaper and health checks.
+	cfg.MaxConns = 16
+	cfg.MinConns = 2
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnIdleTime = 5 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("ping: %w", err)
+	}
+	return &Store{pool: pool}, nil
+}
+
+func (s *Store) Close() { s.pool.Close() }
+
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
+// Claim atomically takes the oldest queued run and marks it running.
+//
+// SKIP LOCKED is what makes this safe under concurrency: a worker that finds
+// the head row already locked moves to the next one instead of blocking behind
+// it.
+func (s *Store) Claim(ctx context.Context) (*Run, error) {
+	const q = `
+		update runs set
+			status = 'running',
+			started_at = now()
+		where id = (
+			select id from runs
+			where status = 'queued'
+			order by created_at
+			for update skip locked
+			limit 1
+		)
+		returning id, tenant_id, task, model, tools,
+		          coalesce(system_prompt, ''), temperature, timeout_s, max_tokens`
+
+	var r Run
+	var temp *float64
+	err := s.pool.QueryRow(ctx, q).Scan(
+		&r.ID, &r.TenantID, &r.Task, &r.Model, &r.Tools,
+		&r.SystemPrompt, &temp, &r.TimeoutS, &r.MaxTokens,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoWork
+	}
+	if err != nil {
+		return nil, fmt.Errorf("claim: %w", err)
+	}
+	r.Temperature = temp
+	return &r, nil
+}
+
+// Get loads a run by id, used when the queue hands over an id directly.
+func (s *Store) Get(ctx context.Context, id string) (*Run, error) {
+	const q = `
+		select id, tenant_id, task, model, tools,
+		       coalesce(system_prompt, ''), temperature, timeout_s, max_tokens
+		from runs where id = $1`
+
+	var r Run
+	var temp *float64
+	err := s.pool.QueryRow(ctx, q, id).Scan(
+		&r.ID, &r.TenantID, &r.Task, &r.Model, &r.Tools,
+		&r.SystemPrompt, &temp, &r.TimeoutS, &r.MaxTokens,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get run %s: %w", id, err)
+	}
+	r.Temperature = temp
+	return &r, nil
+}
+
+// MarkRunning transitions a claimed-by-id run, returning false if some other
+// worker got there first. The status guard is the whole point.
+func (s *Store) MarkRunning(ctx context.Context, id string) (bool, error) {
+	const q = `
+		update runs set status = 'running', started_at = now()
+		where id = $1 and status = 'queued'`
+
+	tag, err := s.pool.Exec(ctx, q, id)
+	if err != nil {
+		return false, fmt.Errorf("mark running: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// AppendEvent writes one trace event. Conflicts on (run_id, seq) are ignored:
+// a retried write must never produce a duplicate in a stream clients resume
+// from by cursor.
+func (s *Store) AppendEvent(
+	ctx context.Context, runID, tenantID string, seq int, eventType string, payload []byte,
+) error {
+	const q = `
+		insert into trace_events (run_id, tenant_id, seq, type, payload)
+		values ($1, $2, $3, $4, $5)
+		on conflict (run_id, seq) do nothing`
+
+	if _, err := s.pool.Exec(ctx, q, runID, tenantID, seq, eventType, payload); err != nil {
+		return fmt.Errorf("append event %d: %w", seq, err)
+	}
+	return nil
+}
+
+type Completion struct {
+	Status     string
+	Result     string
+	Error      string
+	DurationMS int
+}
+
+// Finish writes the terminal state of a run.
+func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
+	const q = `
+		update runs set
+			status = $2,
+			result = nullif($3, ''),
+			error = nullif($4, ''),
+			finished_at = now(),
+			duration_ms = $5
+		where id = $1`
+
+	if _, err := s.pool.Exec(ctx, q, id, c.Status, c.Result, c.Error, c.DurationMS); err != nil {
+		return fmt.Errorf("finish run %s: %w", id, err)
+	}
+	return nil
+}
