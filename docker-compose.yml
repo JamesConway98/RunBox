@@ -1,0 +1,39 @@
+# Local development stack.
+#
+# Postgres and Redis only. The control plane, the runner and the web app run on
+# the host so they are fast to restart and easy to attach a debugger to. The
+# runner in particular needs the host's Docker socket, and nesting that inside a
+# container is a solved problem that solves nothing here.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: runbox
+      POSTGRES_PASSWORD: runbox
+      POSTGRES_DB: runbox
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runbox -d runbox"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # No persistence: everything in Redis is a queue entry or a pub/sub message,
+    # both of which are reconstructible from Postgres.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
