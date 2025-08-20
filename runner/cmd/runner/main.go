@@ -3,14 +3,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
-	"time"
 
 	"github.com/jamesconway/runbox/runner/internal/config"
+	"github.com/jamesconway/runbox/runner/internal/queue"
 	"github.com/jamesconway/runbox/runner/internal/sandbox"
 	"github.com/jamesconway/runbox/runner/internal/store"
 	"github.com/jamesconway/runbox/runner/internal/worker"
@@ -46,6 +46,12 @@ func run() error {
 	}
 	defer st.Close()
 
+	q, err := queue.Open(ctx, cfg.RedisURL)
+	if err != nil {
+		return err
+	}
+	defer q.Close()
+
 	sbx, err := sandbox.New(log)
 	if err != nil {
 		return err
@@ -57,60 +63,30 @@ func run() error {
 		return err
 	}
 
-	executor := worker.NewExecutor(cfg, st, sbx, nil, log)
+	executor := worker.NewExecutor(cfg, st, sbx, q, log)
+	pool := worker.NewPool(cfg.Workers, q, st, executor, log)
+	canceller := worker.NewCancelWatcher(q, pool, log)
+
+	if depth, err := q.Depth(ctx); err == nil && depth > 0 {
+		log.Info("queue has waiting work at startup", "depth", depth)
+	}
 
 	log.Info("runner ready",
-		"workers", cfg.Workers, "image", cfg.AgentImage, "poll", cfg.PollInterval)
+		"workers", cfg.Workers, "image", cfg.AgentImage, "max_timeout", cfg.MaxTimeout)
 
-	// M1: a single worker polling Postgres. The worker pool and the Redis queue
-	// land in M2; the executor above is already safe to call concurrently.
-	if err := pollLoop(ctx, st, executor, cfg.PollInterval, log); err != nil {
-		return err
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		canceller.Run(ctx)
+	}()
+
+	// Blocks until the context is cancelled, then drains in-flight runs.
+	pool.Run(ctx)
+	wg.Wait()
 
 	log.Info("runner stopped")
 	return nil
-}
-
-func pollLoop(
-	ctx context.Context,
-	st *store.Store,
-	executor *worker.Executor,
-	interval time.Duration,
-	log *slog.Logger,
-) error {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		run, err := st.Claim(ctx)
-		switch {
-		case errors.Is(err, store.ErrNoWork):
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-ticker.C:
-				continue
-			}
-		case err != nil:
-			if ctx.Err() != nil {
-				return nil
-			}
-			// A transient database error should not kill the process; back off
-			// and try again.
-			log.Error("claim failed", "err", err)
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(2 * time.Second):
-				continue
-			}
-		}
-
-		if err := executor.Execute(ctx, run); err != nil {
-			log.Error("execute failed", "run_id", run.ID, "err", err)
-		}
-	}
 }
 
 func newLogger(level string) *slog.Logger {

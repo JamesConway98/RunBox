@@ -61,6 +61,9 @@ func Load() (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
+	if c.RedisURL == "" {
+		return nil, fmt.Errorf("REDIS_URL is required")
+	}
 	if c.Workers < 1 {
 		return nil, fmt.Errorf("RUNBOX_WORKERS must be at least 1, got %d", c.Workers)
 	}
