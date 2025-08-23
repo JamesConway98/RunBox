@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from .. import pagination
 from ..auth import Principal, authenticate, get_db
+from ..bus import Bus
+from ..config import Settings
 from ..db import Database
 from ..schemas import (
+    TERMINAL_STATUSES,
     CreateRunRequest,
     EventList,
     Run,
@@ -16,8 +21,19 @@ from ..schemas import (
     TraceEvent,
     Usage,
 )
+from ..sse import SSE_HEADERS, replay_then_subscribe
+
+logger = logging.getLogger("runbox.runs")
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
+
+
+async def get_bus(request: Request) -> Bus:
+    return request.app.state.bus
+
+
+async def get_settings_dep(request: Request) -> Settings:
+    return request.app.state.settings
 
 RUN_COLUMNS = """
     r.id, r.status, r.task, r.model, r.tools, r.result, r.error,
@@ -49,6 +65,7 @@ async def create_run(
     response: Response,
     principal: Annotated[Principal, Depends(authenticate)],
     db: Annotated[Database, Depends(get_db)],
+    bus: Annotated[Bus, Depends(get_bus)],
 ) -> RunCreated:
     """Create and enqueue a run.
 
@@ -97,6 +114,16 @@ async def create_run(
         )
 
     run_id = str(row["id"])
+
+    # Enqueue after the row is committed, never before. A queue entry pointing
+    # at a row that does not exist yet is a race the runner would have to
+    # defend against; a row with no queue entry is just a run the runner's
+    # Postgres sweep picks up a moment later.
+    try:
+        await bus.enqueue(run_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("enqueue failed for run %s; falling back to the sweep", run_id)
+
     response.headers["Location"] = f"/v1/runs/{run_id}"
     return RunCreated(id=run_id, status=row["status"])
 
@@ -222,3 +249,105 @@ async def list_events(
         has_more=has_more,
         next_cursor=str(rows[-1]["seq"]) if has_more and rows else None,
     )
+
+
+@router.get("/{run_id}/stream")
+async def stream_run(
+    run_id: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(authenticate)],
+    db: Annotated[Database, Depends(get_db)],
+    bus: Annotated[Bus, Depends(get_bus)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    after: int = Query(default=0, ge=0, description="Resume from this seq"),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    """Live trace as server-sent events.
+
+    Resume from a cursor either explicitly with `?after=`, or implicitly — the
+    browser's EventSource replays `Last-Event-ID` on its own reconnect, and
+    honouring it means resumption costs the client nothing at all.
+
+    The explicit parameter wins when both are present, because a caller that
+    said something specific meant it.
+    """
+    if after == 0 and last_event_id:
+        try:
+            after = max(0, int(last_event_id))
+        except ValueError:
+            # A header we cannot parse is not worth a 400. Start from the top;
+            # the client gets a complete trace rather than an error.
+            logger.warning("unparseable Last-Event-ID: %r", last_event_id)
+
+    async with db.acquire(principal.tenant_id) as conn:
+        exists = await conn.fetchval(
+            "select 1 from runs where id = $1 and tenant_id = $2", run_id, principal.tenant_id
+        )
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "not_found", "message": f"Run '{run_id}' does not exist."},
+        )
+
+    async def generate():
+        # Flush a comment immediately. It gets headers on the wire before the
+        # first event, so the client's onopen fires now rather than whenever
+        # the agent happens to say something.
+        yield ": open\n\n"
+        async for frame in replay_then_subscribe(
+            db=db,
+            bus=bus,
+            settings=settings,
+            tenant_id=principal.tenant_id,
+            run_id=run_id,
+            after=after,
+        ):
+            if await request.is_disconnected():
+                # The run carries on. Streaming is observation, not control.
+                logger.debug("client disconnected from run %s", run_id)
+                return
+            yield frame
+
+    return StreamingResponse(generate(), headers=SSE_HEADERS)
+
+
+@router.post("/{run_id}/cancel", response_model=Run)
+async def cancel_run(
+    run_id: str,
+    principal: Annotated[Principal, Depends(authenticate)],
+    db: Annotated[Database, Depends(get_db)],
+    bus: Annotated[Bus, Depends(get_bus)],
+) -> Run:
+    """Request cooperative cancellation.
+
+    Idempotent: cancelling an already-terminal run returns it unchanged rather
+    than erroring, because a client retrying a cancel is doing the right thing
+    and should not be punished for it.
+    """
+    async with db.acquire(principal.tenant_id) as conn:
+        row = await conn.fetchrow(
+            "select status from runs where id = $1 and tenant_id = $2",
+            run_id,
+            principal.tenant_id,
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "not_found", "message": f"Run '{run_id}' does not exist."},
+            )
+
+        if row["status"] not in TERMINAL_STATUSES:
+            # A queued run can be cancelled here and now; nothing has started.
+            # A running one needs the runner to notice, so we only flag it and
+            # let the worker record the terminal state.
+            if row["status"] == "queued":
+                await conn.execute(
+                    """
+                    update runs set status = 'cancelled', finished_at = now(), duration_ms = 0
+                    where id = $1 and status = 'queued'
+                    """,
+                    run_id,
+                )
+            await bus.request_cancel(run_id)
+
+    return await get_run(run_id, principal, db)

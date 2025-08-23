@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .bus import Bus
 from .config import get_settings
 from .db import Database
 from .routers import runs
@@ -22,13 +23,19 @@ async def lifespan(app: FastAPI):
 
     db = Database(settings)
     await db.connect()
+
+    bus = Bus(settings)
+    await bus.connect()
+
     app.state.db = db
+    app.state.bus = bus
     app.state.settings = settings
     logger.info("control plane ready")
 
     try:
         yield
     finally:
+        await bus.disconnect()
         await db.disconnect()
 
 
@@ -91,12 +98,25 @@ async def health(request: Request) -> dict:
     up until someone tries to use the service.
     """
     db: Database = request.app.state.db
+    bus: Bus = request.app.state.bus
+
+    checks: dict[str, str] = {}
     try:
         async with db.acquire_admin() as conn:
             await conn.fetchval("select 1")
+        checks["database"] = "ok"
     except Exception as exc:  # noqa: BLE001
-        logger.exception("health check failed")
-        return JSONResponse(
-            status_code=503, content={"status": "degraded", "database": str(exc)}
-        )
-    return {"status": "ok", "database": "ok"}
+        logger.exception("database health check failed")
+        checks["database"] = str(exc)
+
+    try:
+        depth = await bus.queue_depth()
+        checks["redis"] = "ok"
+        checks["queue_depth"] = str(depth)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("redis health check failed")
+        checks["redis"] = str(exc)
+
+    healthy = checks.get("database") == "ok" and checks.get("redis") == "ok"
+    body = {"status": "ok" if healthy else "degraded", **checks}
+    return body if healthy else JSONResponse(status_code=503, content=body)
