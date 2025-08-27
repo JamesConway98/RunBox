@@ -36,3 +36,7 @@ runner/bin/
 # local data
 tmp/
 *.log
+
+# next
+web/.next/
+web/next-env.d.ts

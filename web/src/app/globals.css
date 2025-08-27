@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Both themes are first-class. Half the people who open this will be on a
+   laptop set to dark and half on a phone set to light, and neither should get
+   the version that was clearly an afterthought. */
+:root {
+  --bg: 0 0% 100%;
+  --surface: 240 20% 99%;
+  --raised: 240 20% 97%;
+  --border: 240 6% 90%;
+  --fg: 240 10% 10%;
+  --muted: 240 4% 46%;
+  --subtle: 240 4% 64%;
+  --accent: 243 75% 59%;
+  --accent-fg: 0 0% 100%;
+  --success: 142 71% 36%;
+  --warning: 38 92% 42%;
+  --danger: 0 72% 47%;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+.dark {
+  --bg: 240 10% 6%;
+  --surface: 240 8% 8%;
+  --raised: 240 7% 12%;
+  --border: 240 6% 18%;
+  --fg: 240 10% 95%;
+  --muted: 240 5% 60%;
+  --subtle: 240 5% 42%;
+  --accent: 243 80% 68%;
+  --accent-fg: 240 20% 8%;
+  --success: 142 60% 50%;
+  --warning: 38 92% 58%;
+  --danger: 0 72% 62%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-bg text-fg antialiased;
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Monospace is reserved for machine output — traces, ids, JSON. Using it for
+     prose makes everything look like a terminal and nothing look important. */
+  code,
+  pre,
+  .mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "calt" 0;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+
+  ::selection {
+    @apply bg-accent/25;
+  }
+}
+
+@layer utilities {
+  /* Respect the setting. Someone with vestibular sensitivity should not have
+     to endure a trace animating 400 rows into place. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+}
