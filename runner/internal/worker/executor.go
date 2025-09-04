@@ -115,11 +115,52 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 	exitCode, waitErr := container.Wait(context.WithoutCancel(runCtx))
 
 	completion := state.resolve(runCtx, streamErr, waitErr, exitCode, started)
+
+	// Usage is recorded for every terminal state, including timeout and cancel.
+	// A run that burned 40,000 tokens before being cancelled consumed 40,000
+	// tokens, and a metering system that quietly forgets that is not one.
+	cost := e.recordUsage(ctx, run, state, completion.DurationMS, log)
+
 	log.Info("run finished",
 		"status", completion.Status, "duration_ms", completion.DurationMS,
-		"events", state.seq, "exit", exitCode)
+		"events", state.seq, "exit", exitCode, "cost_micros", cost)
 
 	return e.finish(ctx, run.ID, completion)
+}
+
+func (e *Executor) recordUsage(
+	ctx context.Context, run *store.Run, state *runState, durationMS int, log *slog.Logger,
+) int64 {
+	// Prefer the final event, fall back to the last per-turn usage report, and
+	// fall back again to what the runner observed directly. The chain is what
+	// makes a timed-out or cancelled run billable rather than free.
+	reported := state.lastUsage
+	if state.final != nil {
+		reported = state.final.Usage
+	}
+
+	usage := store.Usage{
+		InputTokens:  reported.InputTokens,
+		OutputTokens: reported.OutputTokens,
+		ToolCalls:    reported.ToolCalls,
+		ComputeMS:    durationMS,
+	}
+	// The runner's own count is a floor: it saw every tool_call event that was
+	// written, even ones the agent never got to report.
+	if state.toolCalls > usage.ToolCalls {
+		usage.ToolCalls = state.toolCalls
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+
+	cost, err := e.store.RecordUsage(writeCtx, run.ID, run.TenantID, run.Model, usage)
+	if err != nil {
+		// Not fatal to the run, but it is a billing gap, so it is logged loudly.
+		log.Error("could not record usage", "err", err)
+		return 0
+	}
+	return cost
 }
 
 func (e *Executor) finish(ctx context.Context, runID string, c store.Completion) error {
@@ -139,6 +180,13 @@ type runState struct {
 
 	seq   int
 	final *trace.Final
+
+	// lastUsage is the most recent cumulative report from the agent. It is what
+	// makes a killed run billable: the agent reports after every turn, so even
+	// a container that never reached its final event leaves an accurate figure
+	// behind.
+	lastUsage trace.Usage
+	toolCalls int
 }
 
 func (s *runState) onLine(ctx context.Context, line []byte) error {
@@ -152,7 +200,18 @@ func (s *runState) onLine(ctx context.Context, line []byte) error {
 			fmt.Sprintf("malformed agent output: %v", err))
 	}
 
-	if event.Type == trace.TypeFinal {
+	switch event.Type {
+	case trace.TypeToolCall:
+		s.toolCalls++
+
+	case trace.TypeUsage:
+		if usage, err := event.DecodeUsage(); err == nil {
+			s.lastUsage = usage
+		} else {
+			s.log.Warn("undecodable usage event", "seq", event.Seq, "err", err)
+		}
+
+	case trace.TypeFinal:
 		if final, err := event.DecodeFinal(); err == nil {
 			s.final = &final
 		} else {

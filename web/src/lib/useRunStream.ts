@@ -123,6 +123,20 @@ function applyBatch(state: RunStreamState, action: Action & { type: "batch" }): 
       continue;
     }
 
+    // Usage updates the running totals but is not a timeline row. It arrives
+    // after every model turn, and a trace that shows "usage" between each step
+    // is noisier for the reader without telling them anything the footer is
+    // not already showing.
+    if (payload.type === "usage") {
+      usage = {
+        ...usage,
+        input_tokens: payload.input_tokens,
+        output_tokens: payload.output_tokens,
+        tool_calls: payload.tool_calls,
+      };
+      continue;
+    }
+
     if (!mutatedSegments) {
       segments = segments.slice();
       mutatedSegments = true;
@@ -162,6 +176,7 @@ const EVENT_TYPES = [
   "token",
   "tool_call",
   "tool_result",
+  "usage",
   "error",
   "final",
 ] as const;

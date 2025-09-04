@@ -17,6 +17,7 @@ const (
 	TypeToken      Type = "token"
 	TypeToolCall   Type = "tool_call"
 	TypeToolResult Type = "tool_result"
+	TypeUsage      Type = "usage"
 	TypeError      Type = "error"
 	TypeFinal      Type = "final"
 )
@@ -69,6 +70,18 @@ func Parse(line []byte, seq int) (Event, error) {
 		TS:      probe.TS,
 		Payload: json.RawMessage(append([]byte(nil), line...)),
 	}, nil
+}
+
+// DecodeUsage extracts cumulative usage from a usage event.
+func (e Event) DecodeUsage() (Usage, error) {
+	var u Usage
+	if e.Type != TypeUsage {
+		return u, fmt.Errorf("event %d is %s, not usage", e.Seq, e.Type)
+	}
+	if err := json.Unmarshal(e.Payload, &u); err != nil {
+		return u, fmt.Errorf("decode usage: %w", err)
+	}
+	return u, nil
 }
 
 // DecodeFinal extracts the terminal payload from a final event.

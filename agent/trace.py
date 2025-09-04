@@ -49,6 +49,22 @@ class Trace:
     def token(self, text: str) -> None:
         self.emit("token", text=text)
 
+    def usage(self, input_tokens: int, output_tokens: int, tool_calls: int) -> None:
+        """Cumulative usage, emitted after every model turn.
+
+        Emitted per turn rather than only at the end so that a run killed by a
+        timeout or a cancel still has a recent, accurate token count to bill
+        against. A metering system that loses everything when a run is
+        interrupted is a metering system that undercounts precisely when
+        something went wrong.
+        """
+        self.emit(
+            "usage",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            tool_calls=tool_calls,
+        )
+
     def tool_call(self, tool: str, args: dict, call_id: str) -> None:
         self.emit("tool_call", tool=tool, args=args, call_id=call_id)
 

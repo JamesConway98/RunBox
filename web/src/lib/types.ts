@@ -28,6 +28,7 @@ export type TraceEventType =
   | "token"
   | "tool_call"
   | "tool_result"
+  | "usage"
   | "error"
   | "final";
 
@@ -76,6 +77,7 @@ export type TracePayload =
       output: string;
       duration_ms: number;
     } & Base)
+  | ({ type: "usage"; input_tokens: number; output_tokens: number; tool_calls: number } & Base)
   | ({ type: "error"; message: string; retryable?: boolean; source?: string } & Base)
   | ({ type: "final"; status: RunStatus; result: string | null; usage: Partial<Usage> } & Base);
 

@@ -169,6 +169,10 @@ class Agent:
         completed = llm.with_retries(call, on_retry=on_retry)
         self.input_tokens += completed.usage.input_tokens
         self.output_tokens += completed.usage.output_tokens
+
+        # Report cumulative usage now rather than only at the end, so a run the
+        # runner kills mid-flight is still billed for what it actually used.
+        self._trace.usage(self.input_tokens, self.output_tokens, self.tool_calls)
         return completed
 
     def _execute(self, call: llm.ToolCall) -> dict[str, Any]:
