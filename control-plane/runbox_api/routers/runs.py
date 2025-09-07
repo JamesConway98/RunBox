@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from .. import pagination
+from .. import pagination, quotas
 from ..auth import Principal, authenticate, get_db
 from ..bus import Bus
 from ..config import Settings
@@ -73,6 +73,10 @@ async def create_run(
     caller should watch the stream or poll the detail endpoint.
     """
     async with db.acquire(principal.tenant_id) as conn:
+        # Before anything else. A run rejected before a container exists costs
+        # nothing; one killed halfway has already burned tokens.
+        await quotas.enforce(conn, principal.tenant_id)
+
         model = await conn.fetchrow(
             "select model, supports_tools from model_pricing where model = $1 and active",
             body.model,

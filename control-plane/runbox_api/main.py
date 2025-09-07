@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .bus import Bus
 from .config import get_settings
 from .db import Database
-from .routers import runs
+from .routers import runs, usage
 
 logger = logging.getLogger("runbox")
 
@@ -63,6 +63,7 @@ app.add_middleware(
 )
 
 app.include_router(runs.router)
+app.include_router(usage.router)
 
 
 @app.exception_handler(RequestValidationError)
