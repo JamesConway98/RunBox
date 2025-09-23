@@ -31,25 +31,34 @@ type Config struct {
 	CPULimit      float64
 	PidsLimit     int64
 
-	AnthropicAPIKey string
-	EgressAllowlist []string
+	AnthropicAPIKey  string
+	AnthropicBaseURL string
+	AnthropicVersion string
+	EgressAllowlist  []string
+
+	// SocketBaseDir holds one directory per in-flight run, each containing the
+	// unix sockets bind-mounted into that run's container.
+	SocketBaseDir string
 
 	LogLevel string
 }
 
 func Load() (*Config, error) {
 	c := &Config{
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		RedisURL:        os.Getenv("REDIS_URL"),
-		AgentImage:      envString("RUNBOX_AGENT_IMAGE", "runbox/agent:dev"),
-		Workers:         envInt("RUNBOX_WORKERS", runtime.GOMAXPROCS(0)),
-		PollInterval:    envDuration("RUNBOX_POLL_INTERVAL", 500*time.Millisecond),
-		DefaultTimeout:  envDuration("RUNBOX_DEFAULT_TIMEOUT", 120*time.Second),
-		MaxTimeout:      envDuration("RUNBOX_MAX_TIMEOUT", 600*time.Second),
-		MemoryLimitMB:   int64(envInt("RUNBOX_MEMORY_MB", 512)),
-		CPULimit:        envFloat("RUNBOX_CPUS", 1.0),
-		PidsLimit:       int64(envInt("RUNBOX_PIDS_LIMIT", 128)),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		RedisURL:         os.Getenv("REDIS_URL"),
+		AgentImage:       envString("RUNBOX_AGENT_IMAGE", "runbox/agent:dev"),
+		Workers:          envInt("RUNBOX_WORKERS", runtime.GOMAXPROCS(0)),
+		PollInterval:     envDuration("RUNBOX_POLL_INTERVAL", 500*time.Millisecond),
+		DefaultTimeout:   envDuration("RUNBOX_DEFAULT_TIMEOUT", 120*time.Second),
+		MaxTimeout:       envDuration("RUNBOX_MAX_TIMEOUT", 600*time.Second),
+		MemoryLimitMB:    int64(envInt("RUNBOX_MEMORY_MB", 512)),
+		CPULimit:         envFloat("RUNBOX_CPUS", 1.0),
+		PidsLimit:        int64(envInt("RUNBOX_PIDS_LIMIT", 128)),
+		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicBaseURL: envString("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+		AnthropicVersion: envString("ANTHROPIC_VERSION", "2023-06-01"),
+		SocketBaseDir:    envString("RUNBOX_SOCKET_DIR", "/tmp/runbox-sockets"),
 		EgressAllowlist: envList("RUNBOX_EGRESS_ALLOWLIST", []string{
 			"api.github.com",
 			"raw.githubusercontent.com",

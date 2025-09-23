@@ -105,8 +105,21 @@ class AnthropicProvider:
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         if not self._api_key:
             raise LLMError("ANTHROPIC_API_KEY is not set")
-        self._base_url = (base_url or os.environ.get("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self._client = httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0))
+        self._base_url = (
+            base_url or os.environ.get("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+
+        # The container runs with --network=none, so there is no route to the
+        # provider. Calls go over a unix socket to the runner's proxy, which
+        # holds the real API key and attaches it upstream. The key this process
+        # carries is a placeholder — by design, it is worthless.
+        socket_path = os.environ.get("RUNBOX_LLM_SOCKET", "")
+        transport = httpx.HTTPTransport(uds=socket_path) if socket_path else None
+
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            transport=transport,
+        )
 
     def close(self) -> None:
         self._client.close()

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -37,9 +38,17 @@ type Spec struct {
 	CPUs      float64
 	PidsLimit int64
 
-	// Env holds secrets injected by the runner. These never come from the API
+	// Env holds values injected by the runner. These never come from the API
 	// caller — a tenant cannot make the sandbox carry an environment variable.
+	//
+	// Notably absent: the provider API key. The agent reaches the model through
+	// the runner's LLM proxy, so the most valuable credential in the system is
+	// never present in the least trusted process in the system.
 	Env map[string]string
+
+	// SocketDir is the host directory holding this run's proxy sockets. It is
+	// bind-mounted at /run/runbox and is the container's only route out.
+	SocketDir string
 }
 
 // Limits describes what was actually applied, for logging and for the README's
@@ -106,7 +115,11 @@ func (s *Sandbox) Start(ctx context.Context, spec Spec) (*Container, error) {
 	}
 
 	limits := Limits{
-		Network:     "bridge",
+		// No route to anywhere. The agent's model calls and its http_get tool
+		// both go through unix sockets the runner controls, so this is a real
+		// setting rather than one that gets reverted the first time the agent
+		// needs an API.
+		Network:     "none",
 		ReadonlyFS:  true,
 		CapDrop:     []string{"ALL"},
 		MemoryBytes: spec.MemoryMB * 1024 * 1024,
@@ -114,11 +127,25 @@ func (s *Sandbox) Start(ctx context.Context, spec Spec) (*Container, error) {
 		PidsLimit:   spec.PidsLimit,
 	}
 
+	mounts := []mount.Mount{}
+	if spec.SocketDir != "" {
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeBind,
+			Source: spec.SocketDir,
+			Target: "/run/runbox",
+			// Not read-only: a unix socket needs write access to be connected
+			// to. The directory contains nothing but sockets, and the container
+			// cannot create anything useful in it.
+			ReadOnly: false,
+		})
+	}
+
 	hostCfg := &container.HostConfig{
 		NetworkMode:    container.NetworkMode(limits.Network),
 		ReadonlyRootfs: limits.ReadonlyFS,
 		CapDrop:        limits.CapDrop,
 		SecurityOpt:    []string{"no-new-privileges"},
+		Mounts:         mounts,
 		// A small writable tmpfs, mounted noexec so a downloaded payload cannot
 		// be made runnable.
 		Tmpfs: map[string]string{
@@ -138,7 +165,7 @@ func (s *Sandbox) Start(ctx context.Context, spec Spec) (*Container, error) {
 		&container.Config{
 			Image:           spec.Image,
 			Env:             env,
-			NetworkDisabled: false,
+			NetworkDisabled: true,
 			Labels: map[string]string{
 				"runbox.run_id":  spec.RunID,
 				"runbox.managed": "true",

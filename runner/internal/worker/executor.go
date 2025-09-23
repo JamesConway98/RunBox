@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/jamesconway/runbox/runner/internal/config"
+	"github.com/jamesconway/runbox/runner/internal/proxy"
 	"github.com/jamesconway/runbox/runner/internal/sandbox"
 	"github.com/jamesconway/runbox/runner/internal/store"
 	"github.com/jamesconway/runbox/runner/internal/trace"
@@ -70,6 +72,52 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 
 	state := &runState{run: run, exec: e, log: log}
 
+	// Per-run sockets. These are the container's only route out — it runs with
+	// --network=none, so without them it can reach nothing at all.
+	socketDir, err := proxy.RunDir(e.cfg.SocketBaseDir, run.ID)
+	if err != nil {
+		log.Error("could not create socket dir", "err", err)
+		state.emitRunnerError(ctx, fmt.Sprintf("could not prepare sandbox: %v", err))
+		return e.finish(ctx, run.ID, store.Completion{
+			Status:     "failed",
+			Error:      fmt.Sprintf("could not prepare sandbox: %v", err),
+			DurationMS: msSince(started),
+		})
+	}
+	defer func() {
+		if err := proxy.CleanupRunDir(socketDir); err != nil {
+			log.Warn("could not clean up socket dir", "dir", socketDir, "err", err)
+		}
+	}()
+
+	llmProxy, err := proxy.StartLLM(socketDir, proxy.LLMConfig{
+		Upstream: e.cfg.AnthropicBaseURL,
+		APIKey:   e.cfg.AnthropicAPIKey,
+		Version:  e.cfg.AnthropicVersion,
+	}, log)
+	if err != nil {
+		log.Error("could not start llm proxy", "err", err)
+		state.emitRunnerError(ctx, fmt.Sprintf("could not start llm proxy: %v", err))
+		return e.finish(ctx, run.ID, store.Completion{
+			Status:     "failed",
+			Error:      fmt.Sprintf("could not start llm proxy: %v", err),
+			DurationMS: msSince(started),
+		})
+	}
+	defer llmProxy.Close()
+
+	egressProxy, err := proxy.StartEgress(socketDir, e.cfg.EgressAllowlist, log)
+	if err != nil {
+		log.Error("could not start egress proxy", "err", err)
+		state.emitRunnerError(ctx, fmt.Sprintf("could not start egress proxy: %v", err))
+		return e.finish(ctx, run.ID, store.Completion{
+			Status:     "failed",
+			Error:      fmt.Sprintf("could not start egress proxy: %v", err),
+			DurationMS: msSince(started),
+		})
+	}
+	defer egressProxy.Close()
+
 	container, err := e.sbx.Start(runCtx, sandbox.Spec{
 		RunID:        run.ID,
 		Task:         run.Task,
@@ -82,8 +130,15 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 		MemoryMB:     e.cfg.MemoryLimitMB,
 		CPUs:         e.cfg.CPULimit,
 		PidsLimit:    e.cfg.PidsLimit,
+		SocketDir:    socketDir,
 		Env: map[string]string{
-			"ANTHROPIC_API_KEY": e.cfg.AnthropicAPIKey,
+			// A placeholder, not a credential. The agent's HTTP client requires
+			// the variable to be set; the real key is attached by the proxy,
+			// upstream of anything the agent can observe.
+			"ANTHROPIC_API_KEY":   "proxied-by-runner",
+			"RUNBOX_LLM_SOCKET":   filepath.Join(proxy.SocketDir, proxy.LLMSocketName),
+			"RUNBOX_PROXY_SOCKET": filepath.Join(proxy.SocketDir, proxy.EgressSocketName),
+			"ANTHROPIC_BASE_URL":  "http://llm.runbox.internal",
 		},
 	})
 	if err != nil {
