@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { AppShell } from "@/components/AppShell";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -27,7 +29,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body className="min-h-screen bg-bg text-fg">{children}</body>
+      <body className="min-h-screen bg-bg text-fg">
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

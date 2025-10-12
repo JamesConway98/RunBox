@@ -1,215 +1,174 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
+import { type PaneRunState, PlaygroundPane } from "@/components/playground/PlaygroundPane";
+import { Button } from "@/components/ui/button";
+import { Plus, Skeleton, Textarea } from "@/components/ui/primitives";
 import { ApiError, api } from "@/lib/api";
-import type { TracePayload } from "@/lib/types";
-import { type Segment, useRunStream } from "@/lib/useRunStream";
+import { usePanes } from "@/lib/usePanes";
 
-export default function Home() {
-  const [task, setTask] = useState("What are the three most recent releases of Go?");
-  const [runId, setRunId] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+const EMPTY_RUN: PaneRunState = { runId: null, submitting: false, error: null };
 
-  const stream = useRunStream({ runId });
+export default function PlaygroundPage() {
+  const { panes, hydrated, addPane, removePane, updatePane, movePane, canAdd } = usePanes();
 
-  const submit = useCallback(async () => {
-    if (!task.trim() || submitting) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    setRunId(null);
-    try {
-      const created = await api.createRun({
-        task: task.trim(),
-        model: "claude-sonnet-5",
-        tools: ["http_get"],
-      });
-      setRunId(created.id);
-    } catch (err) {
-      setSubmitError(
-        err instanceof ApiError ? err.message : "Could not reach the API. Is it running?",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }, [task, submitting]);
+  const [prompt, setPrompt] = useState("");
+  const [runs, setRuns] = useState<Record<string, PaneRunState>>({});
 
-  const cancel = useCallback(async () => {
-    if (!runId) return;
-    try {
-      await api.cancelRun(runId);
-    } catch {
-      // The stream will report the terminal state either way.
-    }
-  }, [runId]);
+  // One AbortController per pane. Cancelling a single pane must abort only its
+  // own in-flight create request — a shared controller would take down every
+  // pane's submission, which is precisely the bug this screen exists to prove
+  // is not present.
+  const controllers = useRef(new Map<string, AbortController>());
+
+  const setRun = useCallback((paneId: string, patch: Partial<PaneRunState>) => {
+    setRuns((current) => ({
+      ...current,
+      [paneId]: { ...(current[paneId] ?? EMPTY_RUN), ...patch },
+    }));
+  }, []);
+
+  const runAll = useCallback(async () => {
+    const task = prompt.trim();
+    if (!task) return;
+
+    // Fan out. Promise.allSettled rather than Promise.all: one pane failing to
+    // create its run must not prevent the others from starting.
+    await Promise.allSettled(
+      panes.map(async (pane) => {
+        controllers.current.get(pane.id)?.abort();
+        const controller = new AbortController();
+        controllers.current.set(pane.id, controller);
+
+        setRun(pane.id, { submitting: true, error: null, runId: null });
+        try {
+          const created = await api.createRun(
+            {
+              task,
+              model: pane.model,
+              tools: pane.tools,
+              system_prompt: pane.systemPrompt || null,
+              temperature: pane.temperature,
+              max_tokens: pane.maxTokens,
+            },
+            controller.signal,
+          );
+          setRun(pane.id, { runId: created.id, submitting: false });
+        } catch (err) {
+          if (controller.signal.aborted) {
+            setRun(pane.id, { submitting: false });
+            return;
+          }
+          setRun(pane.id, {
+            submitting: false,
+            error: err instanceof ApiError ? err.message : "Could not reach the API.",
+          });
+        } finally {
+          controllers.current.delete(pane.id);
+        }
+      }),
+    );
+  }, [panes, prompt, setRun]);
+
+  const cancelPane = useCallback(
+    async (paneId: string) => {
+      // Abort the create request if it is still in flight, then ask the server
+      // to stop the run if one already exists. Both are needed: a pane can be
+      // cancelled in either window.
+      controllers.current.get(paneId)?.abort();
+
+      const runId = runs[paneId]?.runId;
+      if (!runId) return;
+      try {
+        await api.cancelRun(runId);
+      } catch {
+        // The stream reports the terminal state regardless.
+      }
+    },
+    [runs],
+  );
+
+  const cancelAll = useCallback(async () => {
+    await Promise.allSettled(panes.map((pane) => cancelPane(pane.id)));
+  }, [panes, cancelPane]);
+
+  const anyActive = useMemo(
+    () => panes.some((pane) => runs[pane.id]?.submitting || runs[pane.id]?.runId),
+    [panes, runs],
+  );
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
-      <header className="mb-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Runbox</h1>
-        <p className="mt-1 text-sm text-muted">
-          Submit a task. It runs in a sandboxed container and streams back here.
-        </p>
-      </header>
-
-      <div className="space-y-3">
-        <textarea
-          value={task}
-          onChange={(event) => setTask(event.target.value)}
-          onKeyDown={(event) => {
-            // Enter is a newline in a textarea, which is correct. Cmd-Enter
-            // submits, which is what anyone who uses this daily will reach for.
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          rows={3}
-          placeholder="Describe a task…"
-          className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2
-                     text-sm placeholder:text-subtle focus:border-accent"
-        />
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => void submit()}
-            disabled={submitting || !task.trim() || stream.isStreaming}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg
-                       transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            {submitting ? "Starting…" : "Run"}
-          </button>
-
-          {stream.isStreaming && runId && (
-            <button
-              onClick={() => void cancel()}
-              className="rounded-lg border border-border px-4 py-2 text-sm
-                         transition-colors hover:bg-raised"
-            >
-              Cancel
-            </button>
-          )}
-
-          <span className="ml-auto font-mono text-xs text-subtle">
-            {runId ? `${stream.connection} · seq ${stream.lastSeq}` : "no run"}
-          </span>
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Playground</h1>
+          <p className="text-sm text-muted">
+            One prompt, every pane, streaming at once.
+          </p>
         </div>
 
-        {submitError && (
-          <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-            {submitError}
-          </p>
-        )}
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={addPane} disabled={!canAdd}>
+            <Plus />
+            Add pane
+          </Button>
+          {anyActive && (
+            <Button variant="subtle" size="sm" onClick={() => void cancelAll()}>
+              Cancel all
+            </Button>
+          )}
+        </div>
+      </header>
+
+      {/* Panes above the composer so that adding a pane does not push the input
+          off-screen, and so the eye lands on the results first. */}
+      {!hydrated ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Skeleton className="h-[26rem] rounded-xl" />
+          <Skeleton className="h-[26rem] rounded-xl" />
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {panes.map((pane, index) => (
+            <PlaygroundPane
+              key={pane.id}
+              pane={pane}
+              index={index}
+              paneCount={panes.length}
+              run={runs[pane.id] ?? EMPTY_RUN}
+              onUpdate={(patch) => updatePane(pane.id, patch)}
+              onRemove={() => removePane(pane.id)}
+              onMove={(direction) => movePane(pane.id, direction)}
+              onCancel={() => void cancelPane(pane.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="sticky bottom-4 rounded-xl border border-border bg-surface/95 p-3 backdrop-blur">
+        <Textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void runAll();
+            }
+          }}
+          rows={2}
+          placeholder="Ask every pane the same thing…"
+          className="border-0 bg-transparent focus:ring-0"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <Button variant="primary" onClick={() => void runAll()} disabled={!prompt.trim()}>
+            Run on {panes.length} {panes.length === 1 ? "pane" : "panes"}
+          </Button>
+          <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-subtle">
+            ⌘↵
+          </kbd>
+        </div>
       </div>
-
-      <section className="mt-10">
-        {!runId ? (
-          <EmptyState />
-        ) : (
-          <ol className="space-y-2">
-            {stream.segments.map((segment) => (
-              <TraceRow key={segment.id} segment={segment} />
-            ))}
-            {stream.segments.length === 0 && (
-              <li className="text-sm text-muted">Waiting for the container to start…</li>
-            )}
-          </ol>
-        )}
-
-        {stream.runStatus && (
-          <footer className="mt-6 flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-4
-                             font-mono text-xs text-muted">
-            <span>status {stream.runStatus}</span>
-            <span>{stream.tokenCount} tokens</span>
-            {stream.latencyToFirstTokenMs !== null && (
-              <span>first token {Math.round(stream.latencyToFirstTokenMs)}ms</span>
-            )}
-          </footer>
-        )}
-      </section>
-    </main>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-      <p className="text-sm font-medium">No run yet</p>
-      <p className="mt-1 text-sm text-muted">
-        Describe a task above and press Run. The trace appears here as it happens.
-      </p>
     </div>
-  );
-}
-
-function TraceRow({ segment }: { segment: Segment }) {
-  if (segment.kind === "text") {
-    return (
-      <li className="animate-fade-in whitespace-pre-wrap text-sm leading-relaxed">
-        {segment.text}
-      </li>
-    );
-  }
-
-  const payload = segment.event.payload as TracePayload;
-
-  switch (payload.type) {
-    case "llm_call":
-      return (
-        <Row seq={segment.seq} tone="muted">
-          calling {payload.model}
-        </Row>
-      );
-    case "tool_call":
-      return (
-        <Row seq={segment.seq} tone="accent">
-          → {payload.tool}({JSON.stringify(payload.args)})
-        </Row>
-      );
-    case "tool_result":
-      return (
-        <Row seq={segment.seq} tone={payload.ok ? "success" : "danger"}>
-          ← {payload.tool} {payload.ok ? "ok" : "failed"} in {payload.duration_ms}ms
-        </Row>
-      );
-    case "error":
-      return (
-        <Row seq={segment.seq} tone="danger">
-          {payload.message}
-        </Row>
-      );
-    case "final":
-      return (
-        <Row seq={segment.seq} tone="muted">
-          finished: {payload.status}
-        </Row>
-      );
-    default:
-      return null;
-  }
-}
-
-function Row({
-  seq,
-  tone,
-  children,
-}: {
-  seq: number;
-  tone: "muted" | "accent" | "success" | "danger";
-  children: React.ReactNode;
-}) {
-  const toneClass = {
-    muted: "text-muted",
-    accent: "text-accent",
-    success: "text-success",
-    danger: "text-danger",
-  }[tone];
-
-  return (
-    <li className={`animate-fade-in font-mono text-xs ${toneClass}`}>
-      <span className="mr-2 text-subtle tabular-nums">{String(seq).padStart(3, "0")}</span>
-      {children}
-    </li>
   );
 }
