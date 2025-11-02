@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 import llm
+import providers
 import tools as toolkit
 from trace import Trace
 
@@ -233,7 +234,7 @@ def main() -> int:
 
     agent: Agent | None = None
     try:
-        provider = llm.AnthropicProvider()
+        provider = providers.for_model(model)
         agent = Agent(
             provider=provider,
             trace=trace,

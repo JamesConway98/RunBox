@@ -90,10 +90,16 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 		}
 	}()
 
+	// Both providers are mounted when configured. Which one the agent talks to
+	// is decided by the model id, inside the sandbox — the proxy only decides
+	// what is reachable at all.
 	llmProxy, err := proxy.StartLLM(socketDir, proxy.LLMConfig{
-		Upstream: e.cfg.AnthropicBaseURL,
-		APIKey:   e.cfg.AnthropicAPIKey,
-		Version:  e.cfg.AnthropicVersion,
+		Upstreams: []proxy.Upstream{
+			proxy.AnthropicUpstream(
+				e.cfg.AnthropicBaseURL, e.cfg.AnthropicAPIKey, e.cfg.AnthropicVersion,
+			),
+			proxy.OpenAIUpstream(e.cfg.OpenAIBaseURL, e.cfg.OpenAIAPIKey),
+		},
 	}, log)
 	if err != nil {
 		log.Error("could not start llm proxy", "err", err)
@@ -136,9 +142,11 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 			// the variable to be set; the real key is attached by the proxy,
 			// upstream of anything the agent can observe.
 			"ANTHROPIC_API_KEY":   "proxied-by-runner",
+			"OPENAI_API_KEY":      "proxied-by-runner",
 			"RUNBOX_LLM_SOCKET":   filepath.Join(proxy.SocketDir, proxy.LLMSocketName),
 			"RUNBOX_PROXY_SOCKET": filepath.Join(proxy.SocketDir, proxy.EgressSocketName),
 			"ANTHROPIC_BASE_URL":  "http://llm.runbox.internal",
+			"OPENAI_BASE_URL":     "http://llm.runbox.internal",
 		},
 	})
 	if err != nil {

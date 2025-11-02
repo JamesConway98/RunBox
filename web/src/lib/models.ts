@@ -51,6 +51,26 @@ export const MODELS: ModelInfo[] = [
     supportsTools: true,
     blurb: "Most capable, most expensive. Reach for it when the others miss.",
   },
+  {
+    id: "gpt-4o",
+    name: "GPT-4o",
+    provider: "openai",
+    contextLength: 128_000,
+    inputMicrosPer1k: 2_500,
+    outputMicrosPer1k: 10_000,
+    supportsTools: true,
+    blurb: "Second provider, wired through the same interface.",
+  },
+  {
+    id: "gpt-4o-mini",
+    name: "GPT-4o mini",
+    provider: "openai",
+    contextLength: 128_000,
+    inputMicrosPer1k: 150,
+    outputMicrosPer1k: 600,
+    supportsTools: true,
+    blurb: "Cheapest option in the catalogue.",
+  },
 ];
 
 export const MODELS_BY_ID = new Map(MODELS.map((m) => [m.id, m]));

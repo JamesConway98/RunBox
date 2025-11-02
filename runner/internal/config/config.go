@@ -34,7 +34,14 @@ type Config struct {
 	AnthropicAPIKey  string
 	AnthropicBaseURL string
 	AnthropicVersion string
-	EgressAllowlist  []string
+
+	// Optional. When unset the OpenAI upstream is simply not mounted, and a run
+	// against a gpt-* model fails with a clear error rather than a confusing
+	// 401 from somebody else's API.
+	OpenAIAPIKey  string
+	OpenAIBaseURL string
+
+	EgressAllowlist []string
 
 	// SocketBaseDir holds one directory per in-flight run, each containing the
 	// unix sockets bind-mounted into that run's container.
@@ -58,6 +65,8 @@ func Load() (*Config, error) {
 		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicBaseURL: envString("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
 		AnthropicVersion: envString("ANTHROPIC_VERSION", "2023-06-01"),
+		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:    envString("OPENAI_BASE_URL", "https://api.openai.com"),
 		SocketBaseDir:    envString("RUNBOX_SOCKET_DIR", "/tmp/runbox-sockets"),
 		EgressAllowlist: envList("RUNBOX_EGRESS_ALLOWLIST", []string{
 			"api.github.com",

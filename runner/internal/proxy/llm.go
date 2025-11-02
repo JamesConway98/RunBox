@@ -3,13 +3,13 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -25,18 +25,70 @@ type LLMProxy struct {
 	log      *slog.Logger
 }
 
-// LLMConfig is the upstream and the credential to attach to it.
+// Upstream is one provider the sandbox may reach, and the credential to attach.
+type Upstream struct {
+	// Path is the single endpoint this upstream exposes. Routing by path keeps
+	// the socket from becoming a general tunnel to anybody's whole API.
+	Path    string
+	BaseURL string
+	APIKey  string
+	// Header names the auth scheme. Anthropic wants x-api-key, everyone
+	// OpenAI-compatible wants Authorization: Bearer.
+	Header string
+	Prefix string            // e.g. "Bearer " — empty for a bare key
+	Extra  map[string]string // provider-specific headers, e.g. anthropic-version
+}
+
+// LLMConfig is the set of providers reachable from one run's sandbox.
 type LLMConfig struct {
-	Upstream string // e.g. https://api.anthropic.com
-	APIKey   string
-	Version  string // anthropic-version header
+	Upstreams []Upstream
+}
+
+// AnthropicUpstream is the default provider wiring.
+func AnthropicUpstream(baseURL, apiKey, version string) Upstream {
+	return Upstream{
+		Path:    "/v1/messages",
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+		Header:  "x-api-key",
+		Extra:   map[string]string{"anthropic-version": version},
+	}
+}
+
+// OpenAIUpstream covers OpenAI and every gateway that speaks its shape.
+func OpenAIUpstream(baseURL, apiKey string) Upstream {
+	return Upstream{
+		Path:    "/v1/chat/completions",
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+		Header:  "Authorization",
+		Prefix:  "Bearer ",
+	}
 }
 
 // StartLLM begins serving on dir/llm.sock.
 func StartLLM(dir string, cfg LLMConfig, log *slog.Logger) (*LLMProxy, error) {
-	upstream, err := url.Parse(cfg.Upstream)
-	if err != nil {
-		return nil, err
+	mux := http.NewServeMux()
+	routed := 0
+
+	for _, up := range cfg.Upstreams {
+		// A provider with no key configured is simply not mounted. Mounting it
+		// would mean the agent gets a confusing 401 from upstream instead of a
+		// clear "not permitted" from us.
+		if up.APIKey == "" || up.BaseURL == "" {
+			log.Debug("llm proxy: upstream not configured, skipping", "path", up.Path)
+			continue
+		}
+		handler, err := reverseTo(up, log)
+		if err != nil {
+			return nil, err
+		}
+		mux.Handle(up.Path, handler)
+		routed++
+	}
+
+	if routed == 0 {
+		return nil, fmt.Errorf("llm proxy: no upstreams configured")
 	}
 
 	listener, err := listenUnix(filepath.Join(dir, LLMSocketName))
@@ -44,21 +96,48 @@ func StartLLM(dir string, cfg LLMConfig, log *slog.Logger) (*LLMProxy, error) {
 		return nil, err
 	}
 
-	reverse := &httputil.ReverseProxy{
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(upstream)
-			r.Out.Host = upstream.Host
+	server := &http.Server{
+		// Anything not explicitly mounted is refused. Without that, the socket
+		// is a general-purpose authenticated tunnel to a provider's whole API —
+		// key management and billing included — on a key the agent is not
+		// supposed to be able to see.
+		Handler:           refuseUnrouted(mux, log),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
-			// Strip anything the agent tried to send in an auth position, then
-			// set our own. A compromised agent must not be able to make this
-			// proxy forward a key of its choosing, or override the version and
-			// get a response shape the runner cannot parse.
+	p := &LLMProxy{listener: listener, server: server, log: log}
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Warn("llm proxy stopped", "err", err)
+		}
+	}()
+	return p, nil
+}
+
+func reverseTo(up Upstream, log *slog.Logger) (http.Handler, error) {
+	target, err := url.Parse(up.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse upstream %q: %w", up.BaseURL, err)
+	}
+
+	return &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(target)
+			r.Out.Host = target.Host
+
+			// Strip everything the agent might have put in an auth position
+			// before setting our own. A compromised agent must not be able to
+			// make this proxy forward a key of its choosing, or downgrade the
+			// API version to get a response shape the runner cannot parse.
 			r.Out.Header.Del("Authorization")
 			r.Out.Header.Del("X-Api-Key")
 			r.Out.Header.Del("Anthropic-Version")
+			r.Out.Header.Del("OpenAI-Organization")
 
-			r.Out.Header.Set("x-api-key", cfg.APIKey)
-			r.Out.Header.Set("anthropic-version", cfg.Version)
+			r.Out.Header.Set(up.Header, up.Prefix+up.APIKey)
+			for name, value := range up.Extra {
+				r.Out.Header.Set(name, value)
+			}
 		},
 
 		// Streaming is the whole reason this exists. Without an explicit flush
@@ -80,41 +159,19 @@ func StartLLM(dir string, cfg LLMConfig, log *slog.Logger) (*LLMProxy, error) {
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":{"message":"upstream unreachable"}}`))
 		},
-	}
-
-	server := &http.Server{
-		Handler:           guardPaths(reverse, log),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	p := &LLMProxy{listener: listener, server: server, log: log}
-	go func() {
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Warn("llm proxy stopped", "err", err)
-		}
-	}()
-	return p, nil
+	}, nil
 }
 
-// guardPaths restricts the proxy to the endpoints the agent actually uses.
-//
-// Without this, the socket is a general-purpose authenticated tunnel to the
-// provider's whole API — including key management and billing endpoints, on a
-// key the agent is not supposed to be able to see.
-func guardPaths(next http.Handler, log *slog.Logger) http.Handler {
-	allowed := map[string]bool{
-		"/v1/messages": true,
-	}
-
+func refuseUnrouted(mux *http.ServeMux, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimSuffix(r.URL.Path, "/")
-		if r.Method != http.MethodPost || !allowed[path] {
+		handler, pattern := mux.Handler(r)
+		if pattern == "" || r.Method != http.MethodPost {
 			log.Warn("llm proxy rejected request", "method", r.Method, "path", r.URL.Path)
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"error":{"message":"endpoint not permitted"}}`))
 			return
 		}
-		next.ServeHTTP(w, r)
+		handler.ServeHTTP(w, r)
 	})
 }
 

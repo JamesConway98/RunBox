@@ -30,9 +30,7 @@ func startLLM(t *testing.T, upstream string, key string) string {
 	t.Helper()
 	dir := shortTempDir(t)
 	p, err := StartLLM(dir, LLMConfig{
-		Upstream: upstream,
-		APIKey:   key,
-		Version:  "2023-06-01",
+		Upstreams: []Upstream{AnthropicUpstream(upstream, key, "2023-06-01")},
 	}, quietLogger())
 	if err != nil {
 		t.Fatalf("StartLLM: %v", err)
@@ -117,7 +115,7 @@ func TestOnlyMessagesEndpointIsReachable(t *testing.T) {
 	dir := startLLM(t, upstream.URL, "sk-real-secret")
 	client := clientOver(dir)
 
-	for _, path := range []string{"/v1/api_keys", "/v1/organizations", "/v1/models", "/"} {
+	for _, path := range []string{"/v1/api_keys", "/v1/organizations", "/v1/chat/completions", "/"} {
 		t.Run(path, func(t *testing.T) {
 			resp, err := client.Post(
 				"http://llm.runbox.internal"+path, "application/json", strings.NewReader("{}"),
@@ -176,5 +174,104 @@ func TestUpstreamFailureBecomesBadGateway(t *testing.T) {
 	// malformed stream and retry against.
 	if !strings.Contains(string(body), "upstream unreachable") {
 		t.Errorf("body = %q", body)
+	}
+}
+
+func TestRoutesEachProviderToItsOwnUpstream(t *testing.T) {
+	// Two providers on one socket. Each has to reach its own upstream with its
+	// own credential and its own auth scheme, decided by path alone.
+	var anthropicKey, openaiAuth string
+
+	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		anthropicKey = r.Header.Get("x-api-key")
+		_, _ = w.Write([]byte(`{"provider":"anthropic"}`))
+	}))
+	defer anthropic.Close()
+
+	openai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		openaiAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"provider":"openai"}`))
+	}))
+	defer openai.Close()
+
+	dir := shortTempDir(t)
+	p, err := StartLLM(dir, LLMConfig{
+		Upstreams: []Upstream{
+			AnthropicUpstream(anthropic.URL, "sk-ant-key", "2023-06-01"),
+			OpenAIUpstream(openai.URL, "sk-oai-key"),
+		},
+	}, quietLogger())
+	if err != nil {
+		t.Fatalf("StartLLM: %v", err)
+	}
+	defer p.Close()
+
+	client := clientOver(dir)
+	for path, want := range map[string]string{
+		"/v1/messages":         "anthropic",
+		"/v1/chat/completions": "openai",
+	} {
+		resp, err := client.Post(
+			"http://llm.runbox.internal"+path, "application/json", strings.NewReader("{}"),
+		)
+		if err != nil {
+			t.Fatalf("post %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if !strings.Contains(string(body), want) {
+			t.Errorf("%s reached the wrong upstream: %s", path, body)
+		}
+	}
+
+	if anthropicKey != "sk-ant-key" {
+		t.Errorf("anthropic upstream saw key %q", anthropicKey)
+	}
+	// The bearer prefix is per-upstream, not global. Getting this wrong sends a
+	// bare key where a Bearer token is expected and produces a 401 that looks
+	// like a bad credential rather than a bad scheme.
+	if openaiAuth != "Bearer sk-oai-key" {
+		t.Errorf("openai upstream saw auth %q", openaiAuth)
+	}
+}
+
+func TestUnconfiguredProviderIsNotMounted(t *testing.T) {
+	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer anthropic.Close()
+
+	dir := shortTempDir(t)
+	p, err := StartLLM(dir, LLMConfig{
+		Upstreams: []Upstream{
+			AnthropicUpstream(anthropic.URL, "sk-ant-key", "2023-06-01"),
+			OpenAIUpstream("https://api.openai.com", ""), // no key configured
+		},
+	}, quietLogger())
+	if err != nil {
+		t.Fatalf("StartLLM: %v", err)
+	}
+	defer p.Close()
+
+	resp, err := clientOver(dir).Post(
+		"http://llm.runbox.internal/v1/chat/completions", "application/json", strings.NewReader("{}"),
+	)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 403 from us, not a confusing 401 from somebody else's API.
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestNoUpstreamsIsAStartupError(t *testing.T) {
+	// Better to fail loudly at startup than to serve a socket that refuses
+	// everything and looks like a networking problem.
+	if _, err := StartLLM(shortTempDir(t), LLMConfig{}, quietLogger()); err == nil {
+		t.Fatal("expected an error with no upstreams configured")
 	}
 }
