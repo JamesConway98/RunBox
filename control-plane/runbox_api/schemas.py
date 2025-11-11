@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -78,23 +78,28 @@ class TraceEvent(BaseModel):
     created_at: datetime
 
 
-class Page(BaseModel):
+T = TypeVar("T")
+
+
+class Page(BaseModel, Generic[T]):
     """Cursor pagination.
 
     An opaque cursor rather than an offset: offsets shift under you when rows
     are inserted, which for a live-updating runs list is not hypothetical.
+
+    Generic so every collection endpoint has the same envelope. A client that
+    can page one list can page all of them.
     """
 
+    data: list[T]
     has_more: bool = False
     next_cursor: str | None = None
 
 
-class RunList(Page):
-    data: list[Run]
-
-
-class EventList(Page):
-    data: list[TraceEvent]
+# Named aliases, so the generated OpenAPI schema has readable model names
+# rather than Page_Run_ everywhere.
+RunList = Page[Run]
+EventList = Page[TraceEvent]
 
 
 class ErrorResponse(BaseModel):
