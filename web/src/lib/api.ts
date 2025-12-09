@@ -1,4 +1,12 @@
 import type {
+  Batch,
+  BatchDetail,
+  Dataset,
+  DatasetCase,
+  EvalScore,
+  ScoreBatchResponse,
+} from "./batchTypes";
+import type {
   ApiErrorBody,
   CreateRunRequest,
   Page,
@@ -113,5 +121,93 @@ export const api = {
   /** URL for an EventSource. Resumption is a query parameter, not a body. */
   streamUrl(id: string, after = 0): string {
     return `${BASE}/v1/runs/${id}/stream${after > 0 ? `?after=${after}` : ""}`;
+  },
+};
+
+/* -------------------------------------------------------------------------- */
+/* Datasets, batches and evals                                                */
+/* -------------------------------------------------------------------------- */
+
+export const datasetsApi = {
+  list(signal?: AbortSignal): Promise<Page<Dataset>> {
+    return request<Page<Dataset>>("/v1/datasets", { signal });
+  },
+
+  /**
+   * Upload via FormData, so the Content-Type boundary is set by the browser.
+   * Setting it by hand omits the boundary and the server cannot parse the body.
+   */
+  async upload(file: File, name: string, signal?: AbortSignal): Promise<Dataset> {
+    const form = new FormData();
+    form.append("file", file);
+    if (name) form.append("name", name);
+
+    const response = await fetch(`${BASE}/v1/datasets`, {
+      method: "POST",
+      body: form,
+      signal,
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await readErrorBody(response));
+    }
+    return (await response.json()) as Dataset;
+  },
+
+  cases(id: string, after = 0, signal?: AbortSignal): Promise<Page<DatasetCase>> {
+    return request<Page<DatasetCase>>(`/v1/datasets/${id}/cases?after=${after}&limit=1000`, {
+      signal,
+    });
+  },
+
+  remove(id: string): Promise<void> {
+    return request<void>(`/v1/datasets/${id}`, { method: "DELETE" });
+  },
+};
+
+export const batchesApi = {
+  list(signal?: AbortSignal): Promise<Page<Batch>> {
+    return request<Page<Batch>>("/v1/batches", { signal });
+  },
+
+  get(id: string, signal?: AbortSignal): Promise<BatchDetail> {
+    return request<BatchDetail>(`/v1/batches/${id}`, { signal });
+  },
+
+  create(
+    body: {
+      dataset_id: string;
+      name: string;
+      prompt_template: string;
+      models: string[];
+      tools?: string[];
+      max_tokens?: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<BatchDetail> {
+    return request<BatchDetail>("/v1/batches", { method: "POST", body, signal });
+  },
+
+  cancel(id: string): Promise<BatchDetail> {
+    return request<BatchDetail>(`/v1/batches/${id}/cancel`, { method: "POST" });
+  },
+};
+
+export const evalsApi = {
+  score(
+    body: { batch_id: string; scorer: string; config?: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<ScoreBatchResponse> {
+    return request<ScoreBatchResponse>("/v1/evals/score", { method: "POST", body, signal });
+  },
+
+  /** Judging is asynchronous; the client polls this while judge runs drain. */
+  collect(batchId: string): Promise<ScoreBatchResponse> {
+    return request<ScoreBatchResponse>(`/v1/evals/collect/${batchId}`, { method: "POST" });
+  },
+
+  scores(batchId: string, scorer?: string, signal?: AbortSignal): Promise<Page<EvalScore>> {
+    const query = new URLSearchParams({ batch_id: batchId, limit: "2000" });
+    if (scorer) query.set("scorer", scorer);
+    return request<Page<EvalScore>>(`/v1/evals/scores?${query}`, { signal });
   },
 };
