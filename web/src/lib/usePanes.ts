@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { track } from "./analytics";
 import { DEFAULT_MODEL, MODELS } from "./models";
 
 /**
@@ -120,6 +121,7 @@ export function usePanes() {
   const addPane = useCallback(() => {
     setPanes((current) => {
       if (current.length >= MAX_PANES) return current;
+      track("pane_added", { pane_count: current.length + 1 });
       // Seed from the last pane so adding a fourth does not mean re-entering
       // the system prompt that the other three already share.
       const template = current[current.length - 1];
@@ -141,10 +143,15 @@ export function usePanes() {
 
   const removePane = useCallback((id: string) => {
     // Never drop to zero — an empty Playground has no affordance to recover.
-    setPanes((current) => (current.length <= 1 ? current : current.filter((p) => p.id !== id)));
+    setPanes((current) => {
+      if (current.length <= 1) return current;
+      track("pane_removed", { pane_count: current.length - 1 });
+      return current.filter((p) => p.id !== id);
+    });
   }, []);
 
   const updatePane = useCallback((id: string, patch: Partial<PaneConfig>) => {
+    if (patch.model) track("model_selected", { model: patch.model, surface: "playground" });
     setPanes((current) => current.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }, []);
 

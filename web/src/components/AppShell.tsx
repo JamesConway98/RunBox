@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Moon, Sun } from "@/components/ui/primitives";
+import { initAnalytics, track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 
 const NAV = [
@@ -19,6 +20,11 @@ const NAV = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+
+  // Registers the page-hide flush so the last batch of a session is not lost.
+  useEffect(() => {
+    initAnalytics();
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -82,6 +88,7 @@ function ThemeToggle() {
       // Private browsing. The toggle still works for this session.
     }
     setDark(next);
+    track("theme_toggled", { to: next ? "dark" : "light" });
   }, []);
 
   return (

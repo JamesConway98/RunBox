@@ -5,6 +5,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { type PaneRunState, PlaygroundPane } from "@/components/playground/PlaygroundPane";
 import { Button } from "@/components/ui/button";
 import { Plus, Skeleton, Textarea } from "@/components/ui/primitives";
+import { track } from "@/lib/analytics";
 import { ApiError, api } from "@/lib/api";
 import { usePanes } from "@/lib/usePanes";
 
@@ -33,6 +34,12 @@ export default function PlaygroundPage() {
     const task = prompt.trim();
     if (!task) return;
 
+    track("playground_fanout", {
+      pane_count: panes.length,
+      distinct_models: new Set(panes.map((p) => p.model)).size,
+      prompt_length: task.length,
+    });
+
     // Fan out. Promise.allSettled rather than Promise.all: one pane failing to
     // create its run must not prevent the others from starting.
     await Promise.allSettled(
@@ -55,6 +62,11 @@ export default function PlaygroundPage() {
             controller.signal,
           );
           setRun(pane.id, { runId: created.id, submitting: false });
+          track("run_started", {
+            model: pane.model,
+            source: "playground",
+            tool_count: pane.tools.length,
+          });
         } catch (err) {
           if (controller.signal.aborted) {
             setRun(pane.id, { submitting: false });
@@ -80,6 +92,7 @@ export default function PlaygroundPage() {
 
       const runId = runs[paneId]?.runId;
       if (!runId) return;
+      track("run_cancelled", { source: "playground" });
       try {
         await api.cancelRun(runId);
       } catch {

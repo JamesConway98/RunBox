@@ -8,6 +8,7 @@ import { PassRateChart } from "@/components/evals/PassRateChart";
 import { ResultsTable, type ResultRow } from "@/components/evals/ResultsTable";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Badge, Card, CardBody, Skeleton } from "@/components/ui/primitives";
+import { track } from "@/lib/analytics";
 import { ApiError, api, batchesApi, evalsApi } from "@/lib/api";
 import type { BatchDetail, EvalScore, ScoreSummary } from "@/lib/batchTypes";
 import { SCORERS } from "@/lib/batchTypes";
@@ -83,6 +84,12 @@ export default function BatchEvalPage() {
         const config =
           scorer === "latency" ? { threshold_ms: 10_000 } : scorer === "regex" ? {} : {};
         const result = await evalsApi.score({ batch_id: id, scorer, config });
+        track("eval_scored", {
+          scorer,
+          scored: result.scored,
+          judge_runs: result.judge_runs_queued,
+          models: batch?.models.length ?? 0,
+        });
         setSummary(result.summary);
         await loadScores();
 
@@ -103,7 +110,7 @@ export default function BatchEvalPage() {
         setScoring(null);
       }
     },
-    [id, loadScores],
+    [id, loadScores, batch],
   );
 
   // The table's rows: one per run in this batch, joined to its score.

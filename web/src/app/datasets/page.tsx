@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Badge, Card, CardBody, Input, Label, Skeleton, Textarea } from "@/components/ui/primitives";
+import { track } from "@/lib/analytics";
 import { ApiError, batchesApi, datasetsApi } from "@/lib/api";
 import type { Batch, Dataset } from "@/lib/batchTypes";
 import { MODELS } from "@/lib/models";
@@ -141,7 +142,12 @@ function UploadCard({ onUploaded }: { onUploaded: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await datasetsApi.upload(file, name.trim());
+      const dataset = await datasetsApi.upload(file, name.trim());
+      track("dataset_uploaded", {
+        case_count: dataset.case_count,
+        file_type: file.name.split(".").pop() ?? "unknown",
+        size_bytes: file.size,
+      });
       setFile(null);
       setName("");
       if (inputRef.current) inputRef.current.value = "";
@@ -232,6 +238,11 @@ function LaunchCard({
     setBusy(true);
     setError(null);
     try {
+      track("batch_launched", {
+        model_count: models.length,
+        case_count: dataset?.case_count ?? 0,
+        run_count: runCount,
+      });
       await batchesApi.create({
         dataset_id: datasetId,
         name: name.trim() || `${dataset?.name ?? "Batch"} · ${models.length} models`,
