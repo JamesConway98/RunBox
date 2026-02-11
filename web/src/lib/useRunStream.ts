@@ -186,9 +186,21 @@ export interface UseRunStreamOptions {
   runId: string | null;
   enabled?: boolean;
   onFinal?: (status: RunStatus, usage: Partial<Usage> | null) => void;
+  /**
+   * Override the endpoint. The public demo streams from /v1/demo/runs/{id}/stream,
+   * which needs no API key but is otherwise the identical server-side path —
+   * the demo showing a different streaming implementation to the real one would
+   * make it a demo of something that does not exist.
+   */
+  urlFor?: (runId: string) => string;
 }
 
-export function useRunStream({ runId, enabled = true, onFinal }: UseRunStreamOptions) {
+export function useRunStream({
+  runId,
+  enabled = true,
+  onFinal,
+  urlFor,
+}: UseRunStreamOptions) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   const sourceRef = useRef<EventSource | null>(null);
@@ -251,7 +263,7 @@ export function useRunStream({ runId, enabled = true, onFinal }: UseRunStreamOpt
 
     // No `after`: the browser replays Last-Event-ID on its own reconnects, so
     // resumption is handled by the transport rather than by this hook.
-    const source = new EventSource(api.streamUrl(runId));
+    const source = new EventSource(urlFor ? urlFor(runId) : api.streamUrl(runId));
     sourceRef.current = source;
 
     source.onopen = () => dispatch({ type: "open" });
@@ -311,7 +323,7 @@ export function useRunStream({ runId, enabled = true, onFinal }: UseRunStreamOpt
         frameRef.current = null;
       }
     };
-  }, [runId, enabled, schedule, flush]);
+  }, [runId, enabled, schedule, flush, urlFor]);
 
   const isStreaming = state.connection === "open" || state.connection === "connecting";
 
