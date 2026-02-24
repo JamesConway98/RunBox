@@ -66,6 +66,7 @@ func run() error {
 	executor := worker.NewExecutor(cfg, st, sbx, q, log)
 	pool := worker.NewPool(cfg.Workers, q, st, executor, log)
 	canceller := worker.NewCancelWatcher(q, pool, log)
+	reaper := worker.NewReaper(st, cfg.MaxTimeout, log)
 
 	if depth, err := q.Depth(ctx); err == nil && depth > 0 {
 		log.Info("queue has waiting work at startup", "depth", depth)
@@ -75,11 +76,13 @@ func run() error {
 		"workers", cfg.Workers, "image", cfg.AgentImage, "max_timeout", cfg.MaxTimeout)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		canceller.Run(ctx)
-	}()
+	for _, task := range []func(context.Context){canceller.Run, reaper.Run} {
+		wg.Add(1)
+		go func(run func(context.Context)) {
+			defer wg.Done()
+			run(ctx)
+		}(task)
+	}
 
 	// Blocks until the context is cancelled, then drains in-flight runs.
 	pool.Run(ctx)

@@ -171,3 +171,50 @@ func (s *Store) Finish(ctx context.Context, id string, c Completion) error {
 	}
 	return nil
 }
+
+// ReapStaleRuns marks runs abandoned by a dead runner as failed.
+//
+// Keyed on started_at rather than on a lease column, because with one runner
+// process a generous deadline gets the same outcome as leasing for a fraction
+// of the machinery. The predicate is deliberately conservative: only runs that
+// actually started, and only those older than a grace period that comfortably
+// exceeds the maximum permitted run timeout.
+//
+// Usage rows are written too. A run that consumed compute and was then orphaned
+// still consumed it, and a metering system that forgets exactly when something
+// went wrong is not one.
+func (s *Store) ReapStaleRuns(ctx context.Context, grace time.Duration) (int, error) {
+	const q = `
+		with reaped as (
+			update runs set
+				status = 'failed',
+				error = 'runner did not finish this run; reaped as orphaned',
+				finished_at = now(),
+				duration_ms = coalesce(
+					extract(milliseconds from (now() - started_at))::integer,
+					0
+				)
+			where status = 'running'
+			  and started_at is not null
+			  and started_at < now() - $1::interval
+			returning id, tenant_id, model, started_at
+		)
+		insert into usage_records (run_id, tenant_id, model, compute_ms, cost_micros)
+		select
+			r.id,
+			r.tenant_id,
+			r.model,
+			extract(milliseconds from (now() - r.started_at))::integer,
+			0
+		from reaped r
+		on conflict (run_id) do nothing`
+
+	tag, err := s.pool.Exec(ctx, q, grace)
+	if err != nil {
+		return 0, fmt.Errorf("reap stale runs: %w", err)
+	}
+	// RowsAffected counts usage inserts, which can be fewer than the runs
+	// reaped when a usage row already existed. Close enough for a log line, and
+	// the alternative is a second query for a number nobody acts on.
+	return int(tag.RowsAffected()), nil
+}
