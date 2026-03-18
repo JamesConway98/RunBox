@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PassRateChart } from "@/components/evals/PassRateChart";
 import { ResultsTable, type ResultRow } from "@/components/evals/ResultsTable";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Badge, Card, CardBody, Skeleton } from "@/components/ui/primitives";
+import { ArrowLeft, Badge, Card, Skeleton } from "@/components/ui/primitives";
 import { track } from "@/lib/analytics";
 import { ApiError, api, batchesApi, evalsApi } from "@/lib/api";
 import type { BatchDetail, EvalScore, ScoreSummary } from "@/lib/batchTypes";

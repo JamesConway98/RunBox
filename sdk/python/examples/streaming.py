@@ -1,6 +1,6 @@
 """Render a live trace in the terminal.
 
-    python examples/streaming.py "Summarise the three most recent Go releases"
+python examples/streaming.py "Summarise the three most recent Go releases"
 """
 
 import sys
@@ -17,9 +17,11 @@ def main() -> int:
         run = rb.runs.create(task=task, tools=["http_get"])
         print(f"{DIM}run {run.id}{RESET}\n")
 
-        for event in run.stream(on_reconnect=lambda n, seq: print(
-            f"\n{DIM}reconnecting (attempt {n}, from seq {seq}){RESET}", file=sys.stderr
-        )):
+        for event in run.stream(
+            on_reconnect=lambda n, seq: print(
+                f"\n{DIM}reconnecting (attempt {n}, from seq {seq}){RESET}", file=sys.stderr
+            )
+        ):
             if event.type == "llm_call":
                 print(f"{DIM}· calling {event.payload.get('model')}{RESET}")
             elif event.type == "tool_call":
@@ -34,8 +36,10 @@ def main() -> int:
             elif event.type == "error":
                 print(f"\n{RED}! {event.message}{RESET}")
 
-        print(f"\n\n{DIM}{run.status} · {run.usage.total_tokens} tokens · "
-              f"${run.usage.cost:.4f} · {run.duration_ms}ms{RESET}")
+        print(
+            f"\n\n{DIM}{run.status} · {run.usage.total_tokens} tokens · "
+            f"${run.usage.cost:.4f} · {run.duration_ms}ms{RESET}"
+        )
     return 0
 
 

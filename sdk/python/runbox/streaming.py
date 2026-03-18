@@ -120,9 +120,7 @@ class EventStream:
             except (httpx.HTTPError, httpx.StreamError) as exc:
                 attempt += 1
                 if attempt >= self._max_attempts:
-                    raise StreamError(
-                        f"stream failed after {attempt} attempts: {exc}"
-                    ) from exc
+                    raise StreamError(f"stream failed after {attempt} attempts: {exc}") from exc
                 if self._on_reconnect:
                     self._on_reconnect(attempt, self._last_seq)
                 self._backoff(attempt)

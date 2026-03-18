@@ -6,9 +6,7 @@ from typing import Any, Generic, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RunStatus = Literal["queued", "running", "succeeded", "failed", "cancelled", "timeout"]
-EventType = Literal[
-    "llm_call", "token", "tool_call", "tool_result", "usage", "error", "final"
-]
+EventType = Literal["llm_call", "token", "tool_call", "tool_result", "usage", "error", "final"]
 
 TERMINAL_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled", "timeout"})
 

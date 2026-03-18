@@ -83,8 +83,7 @@ def _parse_jsonl(text: str) -> list[Case]:
         value = _first_present(record, INPUT_KEYS)
         if value is None:
             raise ParseError(
-                f"Line {line_number} has no input field. "
-                f"Expected one of: {', '.join(INPUT_KEYS)}."
+                f"Line {line_number} has no input field. Expected one of: {', '.join(INPUT_KEYS)}."
             )
 
         expected = _first_present(record, EXPECTED_KEYS)
@@ -132,9 +131,7 @@ def _parse_csv(text: str) -> list[Case]:
     return cases
 
 
-def _make_case(
-    idx: int, value: Any, expected: Any, metadata: dict, line_number: int
-) -> Case:
+def _make_case(idx: int, value: Any, expected: Any, metadata: dict, line_number: int) -> Case:
     text = value if isinstance(value, str) else json.dumps(value)
     if not text.strip():
         raise ParseError(f"Line {line_number} has an empty input.")

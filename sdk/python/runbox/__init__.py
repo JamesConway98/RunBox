@@ -1,18 +1,18 @@
 """Runbox — sandboxed execution and observability for LLM agents.
 
-    from runbox import Runbox
+from runbox import Runbox
 
-    rb = Runbox(api_key="rb_live_...")
-    run = rb.runs.create(task="Summarise the last three Go releases", tools=["http_get"])
+rb = Runbox(api_key="rb_live_...")
+run = rb.runs.create(task="Summarise the last three Go releases", tools=["http_get"])
 
-    for event in run.stream():
-        if event.type == "tool_call":
-            print(f"→ {event.tool}({event.args})")
-        elif event.type == "token":
-            print(event.text, end="", flush=True)
+for event in run.stream():
+    if event.type == "tool_call":
+        print(f"→ {event.tool}({event.args})")
+    elif event.type == "token":
+        print(event.text, end="", flush=True)
 
-    print(run.result)
-    print(f"{run.usage.total_tokens} tokens, ${run.usage.cost:.4f}")
+print(run.result)
+print(f"{run.usage.total_tokens} tokens, ${run.usage.cost:.4f}")
 """
 
 from .client import Run, Runbox

@@ -312,9 +312,7 @@ async def collect_judgements(
 
         summary = await _summarise(conn, batch_id)
 
-    return ScoreBatchResponse(
-        scored=collected, skipped=0, judge_runs_queued=0, summary=summary
-    )
+    return ScoreBatchResponse(scored=collected, skipped=0, judge_runs_queued=0, summary=summary)
 
 
 @router.get("/scores", response_model=Page[EvalScore])

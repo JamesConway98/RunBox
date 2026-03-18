@@ -66,30 +66,22 @@ class TestRegex:
 
 class TestLatency:
     def test_under_threshold_passes_with_full_score(self):
-        result = scoring.score(
-            "latency", "", None, {"threshold_ms": 5000, "duration_ms": 1200}
-        )
+        result = scoring.score("latency", "", None, {"threshold_ms": 5000, "duration_ms": 1200})
         assert result.passed
         assert result.score == 1.0
 
     def test_just_over_threshold_scores_near_one_not_zero(self):
         # A cliff would rank a run 1ms over as equal to one twice as slow.
-        result = scoring.score(
-            "latency", "", None, {"threshold_ms": 1000, "duration_ms": 1001}
-        )
+        result = scoring.score("latency", "", None, {"threshold_ms": 1000, "duration_ms": 1001})
         assert not result.passed
         assert 0.99 < result.score < 1.0
 
     def test_score_decays_to_zero_at_double_the_threshold(self):
-        result = scoring.score(
-            "latency", "", None, {"threshold_ms": 1000, "duration_ms": 2000}
-        )
+        result = scoring.score("latency", "", None, {"threshold_ms": 1000, "duration_ms": 2000})
         assert result.score == 0.0
 
     def test_never_goes_negative(self):
-        result = scoring.score(
-            "latency", "", None, {"threshold_ms": 1000, "duration_ms": 60_000}
-        )
+        result = scoring.score("latency", "", None, {"threshold_ms": 1000, "duration_ms": 60_000})
         assert result.score == 0.0
 
     def test_missing_threshold_is_a_configuration_error(self):

@@ -1,6 +1,6 @@
 """Create a run, wait for it, print the answer.
 
-    python examples/basic.py "What is 17 * 23?"
+python examples/basic.py "What is 17 * 23?"
 """
 
 import sys

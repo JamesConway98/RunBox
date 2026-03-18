@@ -76,12 +76,8 @@ class Database:
 async def _init_connection(conn: asyncpg.Connection) -> None:
     # asyncpg hands back jsonb as a string by default. Decoding it here means
     # every caller gets dicts rather than remembering to json.loads.
-    await conn.set_type_codec(
-        "jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
-    )
-    await conn.set_type_codec(
-        "json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
-    )
+    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    await conn.set_type_codec("json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
 
 def record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:

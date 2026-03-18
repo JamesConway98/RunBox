@@ -12,16 +12,21 @@ def sse(*frames: str) -> str:
     return "".join(frames)
 
 
+def _frames(*pairs: tuple[str, str]) -> list[str]:
+    """Build SSE lines for (id, text) pairs, one frame each."""
+    lines: list[str] = []
+    for seq, text in pairs:
+        lines += [f"id: {seq}", "event: token", f'data: {{"text":"{text}"}}', ""]
+    return lines
+
+
 class TestParseSSE:
     def test_single_frame(self):
-        events = list(parse_sse(iter(['id: 1', 'event: token', 'data: {"text":"hi"}', ""])))
+        events = list(parse_sse(iter(["id: 1", "event: token", 'data: {"text":"hi"}', ""])))
         assert events == [(1, "token", {"text": "hi"})]
 
     def test_multiple_frames(self):
-        lines = [
-            "id: 1", "event: token", 'data: {"text":"a"}', "",
-            "id: 2", "event: token", 'data: {"text":"b"}', "",
-        ]
+        lines = _frames(("1", "a"), ("2", "b"))
         assert [e[0] for e in parse_sse(iter(lines))] == [1, 2]
 
     def test_comments_are_heartbeats_and_are_discarded(self):
@@ -35,10 +40,7 @@ class TestParseSSE:
         assert list(parse_sse(iter(lines))) == [(1, "token", {"text": "split"})]
 
     def test_undecodable_frame_is_skipped_not_fatal(self):
-        lines = [
-            "id: 1", "event: token", "data: {not json", "",
-            "id: 2", "event: token", 'data: {"text":"ok"}', "",
-        ]
+        lines = ["id: 1", "event: token", "data: {not json", "", *_frames(("2", "ok"))]
         events = list(parse_sse(iter(lines)))
         assert events == [(2, "token", {"text": "ok"})]
 
@@ -66,9 +68,7 @@ def test_stream_yields_events_and_stops_at_final():
         return_value=httpx.Response(200, text=body)
     )
     respx.get(url__regex=r".*/v1/runs/r1$").mock(
-        return_value=httpx.Response(
-            200, json={"id": "r1", "status": "succeeded", "result": "42"}
-        )
+        return_value=httpx.Response(200, json={"id": "r1", "status": "succeeded", "result": "42"})
     )
 
     client = Runbox(api_key="rb_live_test", base_url="http://api.test")
@@ -143,9 +143,7 @@ def test_replayed_events_are_not_yielded_twice():
 
 @respx.mock
 def test_stream_gives_up_after_max_attempts():
-    respx.get(url__regex=r".*/v1/runs/r1/stream.*").mock(
-        side_effect=httpx.ConnectError("refused")
-    )
+    respx.get(url__regex=r".*/v1/runs/r1/stream.*").mock(side_effect=httpx.ConnectError("refused"))
     respx.get(url__regex=r".*/v1/runs/r1$").mock(
         return_value=httpx.Response(200, json={"id": "r1", "status": "running"})
     )

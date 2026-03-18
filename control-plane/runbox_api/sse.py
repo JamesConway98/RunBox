@@ -141,9 +141,7 @@ async def replay_then_subscribe(
             # --- 4. live ------------------------------------------------------
             while True:
                 try:
-                    event = await asyncio.wait_for(
-                        inbox.get(), timeout=settings.sse_heartbeat_s
-                    )
+                    event = await asyncio.wait_for(inbox.get(), timeout=settings.sse_heartbeat_s)
                 except TimeoutError:
                     # Quiet stretches are normal — a run can spend 40 seconds
                     # inside one tool call. Without this the connection looks

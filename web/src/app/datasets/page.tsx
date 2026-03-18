@@ -256,7 +256,7 @@ function LaunchCard({
     } finally {
       setBusy(false);
     }
-  }, [datasetId, models, name, template, dataset, onLaunched]);
+  }, [datasetId, models, name, template, dataset, runCount, onLaunched]);
 
   return (
     <Card>

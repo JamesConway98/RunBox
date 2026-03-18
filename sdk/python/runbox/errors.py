@@ -33,8 +33,14 @@ class NotFoundError(APIError):
 class RateLimitError(APIError):
     """429. Carries retry_after when the server supplied one."""
 
-    def __init__(self, status: int, code: str, message: str, detail: dict | None = None,
-                 retry_after: float | None = None):
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        detail: dict | None = None,
+        retry_after: float | None = None,
+    ):
         super().__init__(status, code, message, detail)
         self.retry_after = retry_after
 

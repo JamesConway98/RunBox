@@ -1,0 +1,217 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch cancels the previous run. CI that keeps
+# grinding on a commit nobody is waiting for is a queue nobody wants.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned rather than floating. "It broke and nobody changed anything" is
+  # almost always a toolchain that moved underneath a job.
+  GO_VERSION: "1.24"
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  runner:
+    name: runner (go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: runner/go.sum
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      # -race because this service is a worker pool with shared state, and a
+      # data race that only shows up under load is the exact class of bug this
+      # architecture could produce.
+      - run: go test -race -count=1 ./...
+
+      - run: go build -o bin/runner ./cmd/runner
+
+  control-plane:
+    name: control plane (python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv venv --python ${{ env.PYTHON_VERSION }} .venv
+      - run: VIRTUAL_ENV=.venv uv pip install -e ".[dev]"
+
+      - run: .venv/bin/ruff check runbox_api tests
+      - run: .venv/bin/ruff format --check runbox_api tests
+      - run: .venv/bin/pytest -q
+
+      # Importing the app catches a broken router wiring or a bad Pydantic model
+      # that the unit tests would not, because nothing else imports main.
+      - name: Verify the app builds its OpenAPI schema
+        run: .venv/bin/python -c "from runbox_api.main import app; app.openapi()"
+
+  sdk:
+    name: sdk (python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the current release. The floor is a promise in
+        # pyproject.toml, and a promise nothing tests is a guess.
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv venv --python ${{ matrix.python }} .venv
+      - run: VIRTUAL_ENV=.venv uv pip install -e ".[dev]"
+
+      - run: .venv/bin/ruff check runbox tests examples
+      - run: .venv/bin/pytest -q
+
+  web:
+    name: dashboard (next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `ci` not `install`: it respects the lockfile exactly and fails if
+      # package.json and the lock have drifted apart.
+      - run: npm ci
+
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run build
+
+  agent-image:
+    name: agent image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./agent
+          push: false
+          load: true
+          tags: runbox/agent:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The image is the thing that actually runs untrusted code, so its
+      # hardening is worth asserting rather than assuming. A rebuild that
+      # accidentally reverts USER to root should fail here, not in production.
+      - name: Verify the image runs as a non-root user
+        run: |
+          uid=$(docker run --rm --entrypoint id runbox/agent:ci -u)
+          if [ "$uid" = "0" ]; then
+            echo "agent image runs as root"
+            exit 1
+          fi
+          echo "agent runs as uid $uid"
+
+      - name: Verify the agent exits cleanly without a task
+        run: |
+          # Should emit an error and a final event, not hang and not traceback.
+          output=$(docker run --rm -e RUNBOX_TASK= runbox/agent:ci || true)
+          echo "$output"
+          echo "$output" | grep -q '"type": *"final"'
+
+  sql:
+    name: migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: runbox
+          POSTGRES_PASSWORD: runbox
+          POSTGRES_DB: runbox
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U runbox"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply every migration
+        env:
+          DATABASE_URL: postgresql://runbox:runbox@localhost:5432/runbox
+        run: ./scripts/migrate.sh
+
+      # Applying twice proves the runner's bookkeeping works and that no
+      # migration is accidentally destructive on a second pass.
+      - name: Apply again — must be a no-op
+        env:
+          DATABASE_URL: postgresql://runbox:runbox@localhost:5432/runbox
+        run: |
+          output=$(./scripts/migrate.sh)
+          echo "$output"
+          echo "$output" | grep -q "already up to date"
+
+      - name: Verify row-level security is enabled everywhere it should be
+        env:
+          PGPASSWORD: runbox
+        run: |
+          missing=$(psql -h localhost -U runbox -d runbox -tAc "
+            select tablename from pg_tables
+            where schemaname = 'public'
+              and tablename in ('runs','trace_events','usage_records',
+                                'datasets','dataset_cases','batches','eval_scores')
+              and not rowsecurity")
+          if [ -n "$missing" ]; then
+            echo "RLS is not enabled on: $missing"
+            exit 1
+          fi
+          echo "RLS enabled on every tenant-scoped table"

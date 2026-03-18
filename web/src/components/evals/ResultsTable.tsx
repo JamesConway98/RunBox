@@ -130,11 +130,12 @@ export function ResultsTable({ rows, models }: { rows: ResultRow[]; models: stri
           className="grid items-center gap-2 border-b border-border px-3 py-2
                      text-xs font-medium text-muted"
           style={{ gridTemplateColumns: GRID }}
+          role="row"
         >
-          <span>#</span>
+          <span role="columnheader">#</span>
           <SortHeader label="Model" active={sort} k="model" onClick={toggleSort} />
-          <span>Input</span>
-          <span>Output</span>
+          <span role="columnheader">Input</span>
+          <span role="columnheader">Output</span>
           <SortHeader label="Score" active={sort} k="score" onClick={toggleSort} right />
           <SortHeader label="Time" active={sort} k="duration" onClick={toggleSort} right />
           <SortHeader label="Cost" active={sort} k="cost" onClick={toggleSort} right />
@@ -238,15 +239,21 @@ function SortHeader({
 }) {
   const on = active.key === k;
   return (
-    <button
-      type="button"
-      onClick={() => onClick(k)}
+    // aria-sort belongs on the columnheader, not on the control inside it.
+    <span
+      role="columnheader"
       aria-sort={on ? (active.desc ? "descending" : "ascending") : "none"}
-      className={cn("hover:text-fg", right && "text-right", on && "text-fg")}
+      className={cn(right && "text-right")}
     >
-      {label}
-      {on && <span aria-hidden> {active.desc ? "↓" : "↑"}</span>}
-    </button>
+      <button
+        type="button"
+        onClick={() => onClick(k)}
+        className={cn("hover:text-fg", on && "text-fg")}
+      >
+        {label}
+        {on && <span aria-hidden> {active.desc ? "↓" : "↑"}</span>}
+      </button>
+    </span>
   );
 }
 

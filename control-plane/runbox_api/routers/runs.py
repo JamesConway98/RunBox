@@ -35,6 +35,7 @@ async def get_bus(request: Request) -> Bus:
 async def get_settings_dep(request: Request) -> Settings:
     return request.app.state.settings
 
+
 RUN_COLUMNS = """
     r.id, r.status, r.task, r.model, r.tools, r.result, r.error,
     r.created_at, r.started_at, r.finished_at, r.duration_ms
@@ -166,7 +167,7 @@ async def list_runs(
                u.input_tokens, u.output_tokens, u.tool_calls, u.compute_ms, u.cost_micros
         from runs r
         left join usage_records u on u.run_id = r.id
-        where {' and '.join(conditions)}
+        where {" and ".join(conditions)}
         order by r.created_at desc, r.id desc
         limit ${len(params)}
     """
