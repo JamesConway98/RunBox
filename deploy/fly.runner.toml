@@ -1,0 +1,40 @@
+# The runner. Needs a Docker socket, which is why this is a Fly machine rather
+# than a serverless anything — that requirement rules out every platform that
+# does not give you a host.
+#
+#   fly deploy -c deploy/fly.runner.toml
+#
+# The socket is the genuinely privileged part of this deployment: whoever can
+# reach it is root on the host. It is mounted from the machine's own daemon, and
+# the machine runs nothing else.
+
+app = "runbox-runner"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "../runner/Dockerfile"
+
+[env]
+  RUNBOX_WORKERS = "4"
+  RUNBOX_MEMORY_MB = "512"
+  RUNBOX_CPUS = "1.0"
+  RUNBOX_PIDS_LIMIT = "128"
+  RUNBOX_MAX_TIMEOUT = "600s"
+  RUNBOX_LOG_LEVEL = "info"
+  RUNBOX_SOCKET_DIR = "/var/run/runbox-sockets"
+  # Pinned by digest in production. A tag would mean "which code actually ran"
+  # has no answer, and that is the first question asked about any agent trace.
+  RUNBOX_AGENT_IMAGE = "ghcr.io/jamesconway/runbox-agent@sha256:REPLACE_ME"
+
+[[mounts]]
+  source = "runbox_sockets"
+  destination = "/var/run/runbox-sockets"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"
+
+# No HTTP service. The runner takes work off a queue; nothing should be able to
+# reach it directly.
+[deploy]
+  strategy = "immediate"

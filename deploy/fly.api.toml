@@ -1,0 +1,42 @@
+# The control plane, at api.runbox.jamesconwaydev.com.
+#
+#   fly deploy -c deploy/fly.api.toml
+#   fly certs add api.runbox.jamesconwaydev.com
+
+app = "runbox-api"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "../control-plane/Dockerfile"
+
+[env]
+  LOG_LEVEL = "info"
+  CORS_ORIGINS = "https://runbox.jamesconwaydev.com"
+  DEMO_RATE_LIMIT_PER_HOUR = "5"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Never scaled to zero. A cold start in the middle of an SSE reconnect is a
+  # dropped stream, and the demo's whole job is a good first impression.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    # Generous, because most connections are idle SSE streams holding a socket
+    # rather than doing work.
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
