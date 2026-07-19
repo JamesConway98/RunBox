@@ -260,6 +260,21 @@ curl -X POST localhost:8000/v1/runs \
 | [`sdk/python/`](sdk/python) | Python client with resumable streaming |
 | [`web/`](web) | Next.js dashboard |
 
+## Evidence
+
+The code is not really the deliverable. These are:
+
+- [x] **Public repo**, opening with the architecture and the decisions
+- [x] **Live demo**, no signup, seeded runs and a working "run this" button
+- [x] **SDK** — `pip install runbox`, with three runnable examples
+- [x] **CI** across all five services, including assertions a test suite cannot
+      make (RLS enabled everywhere, migrations idempotent, agent image non-root)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the conventions that are
+load-bearing rather than stylistic.
+
 ## License
 
 MIT
