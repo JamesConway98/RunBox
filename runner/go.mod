@@ -1,4 +1,4 @@
-module github.com/jamesconway/runbox/runner
+module github.com/JamesConway98/RunBox/runner
 
 go 1.25.0
 

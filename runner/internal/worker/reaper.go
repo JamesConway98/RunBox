@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jamesconway/runbox/runner/internal/store"
+	"github.com/JamesConway98/RunBox/runner/internal/store"
 )
 
 // Reaper finds runs that a dead runner left behind.

@@ -1,10 +1,10 @@
 # runbox
 
-Python client for [Runbox](https://runbox.jamesconwaydev.com) — sandboxed
+Python client for [Runbox](https://github.com/JamesConway98/RunBox) — sandboxed
 execution and observability for LLM agents.
 
 ```bash
-pip install runbox
+pip install -e sdk/python     # not on PyPI yet
 ```
 
 ## Quick start
@@ -89,7 +89,7 @@ except RunboxError:
 | Argument | Environment | Default |
 |---|---|---|
 | `api_key` | `RUNBOX_API_KEY` | — (required) |
-| `base_url` | `RUNBOX_BASE_URL` | `https://api.runbox.jamesconwaydev.com` |
+| `base_url` | `RUNBOX_BASE_URL` | `http://localhost:8000` |
 | `timeout` | — | `30.0` |
 | `max_retries` | — | `3` |
 

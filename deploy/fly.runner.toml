@@ -24,7 +24,7 @@ primary_region = "lhr"
   RUNBOX_SOCKET_DIR = "/var/run/runbox-sockets"
   # Pinned by digest in production. A tag would mean "which code actually ran"
   # has no answer, and that is the first question asked about any agent trace.
-  RUNBOX_AGENT_IMAGE = "ghcr.io/jamesconway/runbox-agent@sha256:REPLACE_ME"
+  RUNBOX_AGENT_IMAGE = "ghcr.io/jamesconway98/runbox-agent@sha256:REPLACE_ME"
 
 [[mounts]]
   source = "runbox_sockets"

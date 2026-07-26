@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jamesconway/runbox/runner/internal/queue"
+	"github.com/JamesConway98/RunBox/runner/internal/queue"
 )
 
 // CancelWatcher polls the cancel set and stops matching in-flight runs.

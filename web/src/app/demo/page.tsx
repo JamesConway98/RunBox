@@ -192,7 +192,7 @@ export default function DemoPage() {
           </Link>{" "}
           or{" "}
           <a
-            href="https://github.com/jamesconway/runbox"
+            href="https://github.com/JamesConway98/RunBox"
             className="text-accent hover:underline"
             target="_blank"
             rel="noreferrer"

@@ -6,9 +6,12 @@ Submit a task over an API. The agent runs inside an isolated container with
 tool-calling. The execution trace streams to a dashboard in real time. Every run
 is metered per tenant.
 
-[**Live demo**](https://runbox.jamesconwaydev.com/demo) · no signup ·
-[API docs](https://api.runbox.jamesconwaydev.com/docs) ·
-[Python SDK](sdk/python)
+[Python SDK](sdk/python) · [Architecture](#architecture) · [Deployment](deploy/README.md)
+
+> **Status:** feature-complete and running locally. Not yet deployed — the
+> hosted demo needs a Fly machine with a Docker socket, managed Postgres and
+> Redis, and a provider key. [`deploy/`](deploy/README.md) has the configs and
+> the order to bring them up in.
 
 ---
 
@@ -265,10 +268,12 @@ curl -X POST localhost:8000/v1/runs \
 The code is not really the deliverable. These are:
 
 - [x] **Public repo**, opening with the architecture and the decisions
-- [x] **Live demo**, no signup, seeded runs and a working "run this" button
-- [x] **SDK** — `pip install runbox`, with three runnable examples
+- [x] **SDK** — `pip install -e sdk/python`, with three runnable examples
 - [x] **CI** across all five services, including assertions a test suite cannot
       make (RLS enabled everywhere, migrations idempotent, agent image non-root)
+- [ ] **Live demo** — configs are written ([`deploy/`](deploy/README.md)); the
+      hosting is not yet stood up
+- [ ] **Published to PyPI** — installable from the repo today
 
 ## Contributing
 

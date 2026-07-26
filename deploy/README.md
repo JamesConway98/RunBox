@@ -44,9 +44,9 @@ DATABASE_URL=... ./scripts/migrate.sh
 DATABASE_URL=... python scripts/seed.py     # prints keys once
 
 # 3. Agent image, pinned by digest
-docker build -t ghcr.io/jamesconway/runbox-agent:$(git rev-parse --short HEAD) ./agent
-docker push ghcr.io/jamesconway/runbox-agent:$(git rev-parse --short HEAD)
-docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/jamesconway/runbox-agent:...
+docker build -t ghcr.io/jamesconway98/runbox-agent:$(git rev-parse --short HEAD) ./agent
+docker push ghcr.io/jamesconway98/runbox-agent:$(git rev-parse --short HEAD)
+docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/jamesconway98/runbox-agent:...
 # put that digest in deploy/fly.runner.toml
 
 # 4. Services

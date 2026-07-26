@@ -17,7 +17,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/jamesconway/runbox/runner/internal/trace"
+	"github.com/JamesConway98/RunBox/runner/internal/trace"
 )
 
 const (

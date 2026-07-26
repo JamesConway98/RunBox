@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jamesconway/runbox/runner/internal/config"
-	"github.com/jamesconway/runbox/runner/internal/proxy"
-	"github.com/jamesconway/runbox/runner/internal/sandbox"
-	"github.com/jamesconway/runbox/runner/internal/store"
-	"github.com/jamesconway/runbox/runner/internal/trace"
+	"github.com/JamesConway98/RunBox/runner/internal/config"
+	"github.com/JamesConway98/RunBox/runner/internal/proxy"
+	"github.com/JamesConway98/RunBox/runner/internal/sandbox"
+	"github.com/JamesConway98/RunBox/runner/internal/store"
+	"github.com/JamesConway98/RunBox/runner/internal/trace"
 )
 
 // Publisher fans a stamped event out to live subscribers. In M1 this is a

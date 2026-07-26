@@ -149,7 +149,7 @@ func (p *EgressProxy) fetch(raw string) (string, int, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("could not build request")
 	}
-	request.Header.Set("User-Agent", "runbox-agent/0.1 (+https://github.com/jamesconway/runbox)")
+	request.Header.Set("User-Agent", "runbox-agent/0.1 (+https://github.com/JamesConway98/RunBox)")
 	request.Header.Set("Accept", "text/plain, text/html, application/json;q=0.9, */*;q=0.5")
 
 	response, err := p.client.Do(request)

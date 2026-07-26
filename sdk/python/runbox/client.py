@@ -18,7 +18,9 @@ from . import errors
 from .streaming import MAX_ATTEMPTS, EventStream
 from .types import Event, RunData, Usage
 
-DEFAULT_BASE_URL = "https://api.runbox.jamesconwaydev.com"
+# Localhost until the control plane is deployed. Override with
+# RUNBOX_BASE_URL or base_url= once it is.
+DEFAULT_BASE_URL = "http://localhost:8000"
 DEFAULT_TIMEOUT = 30.0
 USER_AGENT = "runbox-python/0.1.0"
 

@@ -20,8 +20,8 @@ dependencies = ["httpx>=0.24"]
 dev = ["pytest>=8.0", "respx>=0.21", "ruff>=0.5"]
 
 [project.urls]
-Homepage = "https://runbox.jamesconwaydev.com"
-Source = "https://github.com/jamesconway/runbox"
+Homepage = "https://github.com/JamesConway98/RunBox"
+Source = "https://github.com/JamesConway98/RunBox"
 
 [build-system]
 requires = ["hatchling"]

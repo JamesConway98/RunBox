@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jamesconway/runbox/runner/internal/queue"
-	"github.com/jamesconway/runbox/runner/internal/store"
+	"github.com/JamesConway98/RunBox/runner/internal/queue"
+	"github.com/JamesConway98/RunBox/runner/internal/store"
 )
 
 // popTimeout bounds each blocking pop so that shutdown is responsive. An
