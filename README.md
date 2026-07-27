@@ -9,9 +9,9 @@ is metered per tenant.
 [Python SDK](sdk/python) · [Architecture](#architecture) · [Deployment](deploy/README.md)
 
 > **Status:** feature-complete and running locally. Not yet deployed — the
-> hosted demo needs a Fly machine with a Docker socket, managed Postgres and
-> Redis, and a provider key. [`deploy/`](deploy/README.md) has the configs and
-> the order to bring them up in.
+> hosted demo needs managed Postgres and Redis, and a VM with a Docker socket
+> for the runner. [`deploy/`](deploy/README.md) has the configs and the order to
+> bring them up in.
 
 ---
 

@@ -1,0 +1,67 @@
+# systemd unit for the runner.
+#
+# The binary runs natively on the host rather than inside a container, and that
+# is a deliberate choice rather than laziness.
+#
+# The runner creates unix sockets in RUNBOX_SOCKET_DIR and bind-mounts them into
+# each agent container. If the runner were itself containerised, the path it
+# writes to and the path the Docker daemon resolves for the bind mount would be
+# different namespaces — the agent would get an empty directory and every run
+# would fail with "egress proxy unavailable". Running on the host means the two
+# paths are the same path, and the whole class of bug disappears.
+#
+#   sudo cp runbox-runner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now runbox-runner
+
+[Unit]
+Description=Runbox runner — sandboxed agent execution
+Documentation=https://github.com/JamesConway98/RunBox
+# Docker must be up before the runner, or the boot-time ping fails and the
+# service restart-loops until it happens to win the race.
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=runbox
+Group=docker
+WorkingDirectory=/opt/runbox
+
+EnvironmentFile=/etc/runbox/runner.env
+ExecStart=/opt/runbox/runner
+
+Restart=always
+RestartSec=5s
+# Do not give up. A database blip at 3am should not leave the runner dead until
+# someone notices in the morning.
+StartLimitIntervalSec=0
+
+# SIGTERM lets the pool drain in-flight runs; the executor's grace period plus
+# the longest permitted run needs to fit inside this, or a deploy kills work
+# that was about to finish and leaves it for the reaper.
+KillSignal=SIGTERM
+TimeoutStopSec=650
+
+# Hardening. The runner needs the Docker socket, which is already the largest
+# privilege in the deployment, so everything else is locked down to keep the
+# blast radius from growing.
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/run/runbox-sockets
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=runbox-runner
+
+[Install]
+WantedBy=multi-user.target
