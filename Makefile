@@ -26,7 +26,7 @@ reset:
 
 ## db-migrate: apply migrations
 db-migrate:
-	@./scripts/migrate.sh
+	@$(PY)/python scripts/migrate.py
 
 ## db-seed: create demo tenants and print fresh API keys
 db-seed:

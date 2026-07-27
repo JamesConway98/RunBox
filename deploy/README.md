@@ -58,15 +58,26 @@ The container binds `$PORT`, which Railway assigns. Hard-coding a port means
 the healthcheck never connects and the deploy fails with nothing useful in the
 logs.
 
-Railway injects `DATABASE_URL` and `REDIS_URL` into services in the same
-project, so the control plane needs little else:
+Railway does **not** share variables between services automatically. Each
+service gets its own environment, and cross-service values are explicit
+references — `${{Postgres.DATABASE_URL}}` resolves at deploy time to the
+internal hostname.
+
+Without these the API falls back to the localhost default in `config.py` and
+dies on boot with `ConnectionRefusedError: [Errno 111] Connection refused`,
+which reads like a network problem and is actually an unset variable.
 
 ```bash
 railway variables --service api \
-  --set "CORS_ORIGINS=https://runbox.jamesconwaydev.com" \
-  --set "DEMO_RATE_LIMIT_PER_HOUR=5" \
-  --set "LOG_LEVEL=info"
+  --set 'DATABASE_URL=${{Postgres.DATABASE_URL}}' \
+  --set 'REDIS_URL=${{Redis.REDIS_URL}}' \
+  --set 'CORS_ORIGINS=https://runbox.jamesconwaydev.com' \
+  --set 'DEMO_RATE_LIMIT_PER_HOUR=5' \
+  --set 'LOG_LEVEL=info'
 ```
+
+Single quotes matter: `${{...}}` must reach Railway intact rather than being
+expanded by your shell into nothing.
 
 Note what is **not** set there: no provider key. The control plane never calls a
 model, so it has no business holding one.
@@ -82,11 +93,17 @@ railway domain --service api api.runbox.jamesconwaydev.com
 Run from your laptop against Railway's **public** connection string — the
 `.railway.internal` hostnames only resolve inside their network.
 
+Use `DATABASE_PUBLIC_URL` from the Postgres service — the `.railway.internal`
+hostname only resolves from inside Railway.
+
 ```bash
-export DATABASE_URL="postgresql://postgres:...@<host>.proxy.rlwy.net:PORT/railway"
-./scripts/migrate.sh
+export DATABASE_URL="$(railway variables --service Postgres --kv | grep '^DATABASE_PUBLIC_URL=' | cut -d= -f2-)"
+control-plane/.venv/bin/python scripts/migrate.py
 control-plane/.venv/bin/python scripts/seed.py   # prints API keys once
 ```
+
+The migration runner uses asyncpg rather than psql, so the only prerequisite is
+the control-plane venv you already have.
 
 ## 3. Agent image, pinned by digest
 

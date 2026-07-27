@@ -182,36 +182,58 @@ jobs:
           --health-interval 3s
           --health-timeout 3s
           --health-retries 10
+    env:
+      DATABASE_URL: postgresql://runbox:runbox@localhost:5432/runbox
     steps:
       - uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The migration runner needs asyncpg, not psql.
+      - run: uv venv --python ${{ env.PYTHON_VERSION }} .venv
+      - run: VIRTUAL_ENV=.venv uv pip install asyncpg
+
       - name: Apply every migration
-        env:
-          DATABASE_URL: postgresql://runbox:runbox@localhost:5432/runbox
-        run: ./scripts/migrate.sh
+        run: .venv/bin/python scripts/migrate.py
 
       # Applying twice proves the runner's bookkeeping works and that no
       # migration is accidentally destructive on a second pass.
       - name: Apply again — must be a no-op
-        env:
-          DATABASE_URL: postgresql://runbox:runbox@localhost:5432/runbox
         run: |
-          output=$(./scripts/migrate.sh)
+          output=$(.venv/bin/python scripts/migrate.py)
           echo "$output"
           echo "$output" | grep -q "already up to date"
 
       - name: Verify row-level security is enabled everywhere it should be
-        env:
-          PGPASSWORD: runbox
         run: |
-          missing=$(psql -h localhost -U runbox -d runbox -tAc "
-            select tablename from pg_tables
-            where schemaname = 'public'
-              and tablename in ('runs','trace_events','usage_records',
-                                'datasets','dataset_cases','batches','eval_scores')
-              and not rowsecurity")
-          if [ -n "$missing" ]; then
-            echo "RLS is not enabled on: $missing"
-            exit 1
-          fi
-          echo "RLS enabled on every tenant-scoped table"
+          .venv/bin/python - <<'EOF'
+          import asyncio, os, sys, asyncpg
+
+          SCOPED = {'runs', 'trace_events', 'usage_records', 'tenant_limits',
+                    'datasets', 'dataset_cases', 'batches', 'eval_scores'}
+
+          async def main():
+              conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+              rows = await conn.fetch(
+                  "select tablename, rowsecurity from pg_tables where schemaname='public'")
+              await conn.close()
+
+              found = {r['tablename'] for r in rows}
+              unprotected = {r['tablename'] for r in rows
+                             if r['tablename'] in SCOPED and not r['rowsecurity']}
+              # A tenant-scoped table that vanished is as much a problem as one
+              # without a policy — it means this list went stale.
+              missing = SCOPED - found
+
+              if unprotected or missing:
+                  if unprotected:
+                      print('RLS not enabled on:', ', '.join(sorted(unprotected)))
+                  if missing:
+                      print('expected tables not found:', ', '.join(sorted(missing)))
+                  sys.exit(1)
+              print(f'RLS enabled on all {len(SCOPED)} tenant-scoped tables')
+
+          asyncio.run(main())
+          EOF
