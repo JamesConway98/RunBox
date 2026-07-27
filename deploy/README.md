@@ -45,9 +45,18 @@ railway init --name runbox
 railway add --database postgres
 railway add --database redis
 
-# The API builds from control-plane/Dockerfile via control-plane/railway.json.
-railway up --service api --path-as-root control-plane
+# Create the service *before* deploying to it. `railway up` deploys to an
+# existing service and fails with "Service not found" otherwise.
+railway add --service api
+
+# --path-as-root makes control-plane/ the archive root, so railway.json and
+# Dockerfile land at the top level where Railway looks for them.
+railway up control-plane --path-as-root --service api
 ```
+
+The container binds `$PORT`, which Railway assigns. Hard-coding a port means
+the healthcheck never connects and the deploy fails with nothing useful in the
+logs.
 
 Railway injects `DATABASE_URL` and `REDIS_URL` into services in the same
 project, so the control plane needs little else:

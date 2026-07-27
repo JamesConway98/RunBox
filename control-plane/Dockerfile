@@ -31,6 +31,15 @@ EXPOSE 8000
 # One worker. The control plane is IO-bound and holds long-lived SSE
 # connections; more workers would multiply memory without adding throughput,
 # and horizontal scaling is a platform concern rather than a flag here.
-CMD ["uvicorn", "runbox_api.main:app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1", "--timeout-keep-alive", "75"]
+#
+# $PORT with a fallback, because most platforms assign the port rather than
+# letting you pick it — Railway sets PORT and routes to whatever it says.
+# Hard-coding 8000 means the healthcheck never connects and the deploy fails
+# with nothing useful in the logs.
+#
+# `exec` matters: without it the shell stays PID 1 and swallows SIGTERM, so a
+# redeploy kills the process outright instead of letting uvicorn drain the SSE
+# connections it is holding open.
+CMD ["sh", "-c", "exec uvicorn runbox_api.main:app \
+     --host 0.0.0.0 --port ${PORT:-8000} \
+     --workers 1 --timeout-keep-alive 75"]
