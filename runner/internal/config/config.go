@@ -92,9 +92,15 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
-// PinnedImage reports whether the agent image is referenced by digest.
+// PinnedImage reports whether the agent image is referenced immutably.
+//
+// Two forms qualify. A registry reference pins with "@sha256:", and a locally
+// built image is identified by a bare "sha256:" id — which is what the runner
+// box uses, since it builds the image it runs rather than pulling one. Both
+// answer "which code actually ran"; only a mutable tag does not.
 func (c *Config) PinnedImage() bool {
-	return strings.Contains(c.AgentImage, "@sha256:")
+	return strings.Contains(c.AgentImage, "@sha256:") ||
+		strings.HasPrefix(c.AgentImage, "sha256:")
 }
 
 func envString(key, def string) string {

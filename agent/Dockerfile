@@ -18,7 +18,14 @@ RUN groupadd --gid 10001 agent \
     && mkdir -p /app /workspace /run/runbox \
     && chown -R agent:agent /workspace
 
-COPY --chown=root:root agent.py llm.py tools.py trace.py /app/
+# Every module, not a hand-maintained list. Naming files individually meant
+# that adding providers.py and llm_openai.py for the second provider shipped an
+# image whose agent crashed on import — and the failure surfaced only when a
+# real run was executed on a deployed runner.
+#
+# The directory holds nothing but agent source, so a glob is both safer and
+# more honest about what the image contains.
+COPY --chown=root:root *.py /app/
 
 WORKDIR /app
 USER agent
