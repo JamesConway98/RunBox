@@ -63,7 +63,7 @@ func run() error {
 		return err
 	}
 
-	executor := worker.NewExecutor(cfg, st, sbx, q, log)
+	executor := worker.NewExecutor(cfg, st, sbx, q, q, log)
 	pool := worker.NewPool(cfg.Workers, q, st, executor, log)
 	canceller := worker.NewCancelWatcher(q, pool, log)
 	reaper := worker.NewReaper(st, cfg.MaxTimeout, log)

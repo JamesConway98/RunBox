@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from .. import pagination, quotas
+from .. import pagination, provider_keys, quotas
 from ..auth import Principal, authenticate, get_db
 from ..bus import Bus
 from ..config import Settings
@@ -67,12 +67,30 @@ async def create_run(
     principal: Annotated[Principal, Depends(authenticate)],
     db: Annotated[Database, Depends(get_db)],
     bus: Annotated[Bus, Depends(get_bus)],
+    x_provider_key: Annotated[str | None, Header()] = None,
 ) -> RunCreated:
     """Create and enqueue a run.
 
     202 rather than 201: the run exists, but nothing has happened yet. The
     caller should watch the stream or poll the detail endpoint.
+
+    The model provider key comes from the caller in `X-Provider-Key`. Runbox
+    does not hold one — see `provider_keys` for what that guarantee does and
+    does not cover.
     """
+    key = provider_keys.parse(x_provider_key)
+    if key is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "provider_key_required",
+                "message": (
+                    "Supply your own model provider key in the X-Provider-Key header. "
+                    "Runbox does not store one."
+                ),
+            },
+        )
+    provider_keys.require_match(key, body.model)
     async with db.acquire(principal.tenant_id) as conn:
         # Before anything else. A run rejected before a container exists costs
         # nothing; one killed halfway has already burned tokens.
@@ -119,6 +137,10 @@ async def create_run(
         )
 
     run_id = str(row["id"])
+
+    # The key goes to Redis before the run is queued, or a fast worker could
+    # claim it and find nothing there.
+    await provider_keys.store(bus.redis, run_id, key)
 
     # Enqueue after the row is committed, never before. A queue entry pointing
     # at a row that does not exist yet is a race the runner would have to

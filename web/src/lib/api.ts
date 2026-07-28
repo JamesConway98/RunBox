@@ -1,3 +1,4 @@
+import { readProviderKey } from "./useProviderKey";
 import type {
   Batch,
   BatchDetail,
@@ -38,15 +39,23 @@ interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: unknown;
   /** Aborts the request when the caller's controller fires. */
   signal?: AbortSignal;
+  /**
+   * Attach the visitor's model provider key. Only run-creating calls set this;
+   * a read of the runs list has no business carrying a credential.
+   */
+  withProviderKey?: boolean;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body, headers, ...rest } = options;
+  const { body, headers, withProviderKey, ...rest } = options;
+
+  const providerKey = withProviderKey ? readProviderKey() : null;
 
   const response = await fetch(`${BASE}${path}`, {
     ...rest,
     headers: {
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(providerKey ? { "X-Provider-Key": providerKey } : {}),
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -89,7 +98,12 @@ async function readErrorBody(response: Response): Promise<ApiErrorBody> {
 
 export const api = {
   createRun(body: CreateRunRequest, signal?: AbortSignal): Promise<RunCreated> {
-    return request<RunCreated>("/v1/runs", { method: "POST", body, signal });
+    return request<RunCreated>("/v1/runs", {
+      method: "POST",
+      body,
+      signal,
+      withProviderKey: true,
+    });
   },
 
   getRun(id: string, signal?: AbortSignal): Promise<Run> {
@@ -184,7 +198,12 @@ export const batchesApi = {
     },
     signal?: AbortSignal,
   ): Promise<BatchDetail> {
-    return request<BatchDetail>("/v1/batches", { method: "POST", body, signal });
+    return request<BatchDetail>("/v1/batches", {
+      method: "POST",
+      body,
+      signal,
+      withProviderKey: true,
+    });
   },
 
   cancel(id: string): Promise<BatchDetail> {
@@ -197,7 +216,13 @@ export const evalsApi = {
     body: { batch_id: string; scorer: string; config?: Record<string, unknown> },
     signal?: AbortSignal,
   ): Promise<ScoreBatchResponse> {
-    return request<ScoreBatchResponse>("/v1/evals/score", { method: "POST", body, signal });
+    // llm_judge creates judge runs, so scoring needs the key too.
+    return request<ScoreBatchResponse>("/v1/evals/score", {
+      method: "POST",
+      body,
+      signal,
+      withProviderKey: true,
+    });
   },
 
   /** Judging is asynchronous; the client polls this while judge runs drain. */

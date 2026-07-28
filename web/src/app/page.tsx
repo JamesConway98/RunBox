@@ -3,11 +3,13 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { type PaneRunState, PlaygroundPane } from "@/components/playground/PlaygroundPane";
+import { ProviderKeyGate } from "@/components/ProviderKeyGate";
 import { Button } from "@/components/ui/button";
 import { Plus, Skeleton, Textarea } from "@/components/ui/primitives";
 import { track } from "@/lib/analytics";
 import { ApiError, api } from "@/lib/api";
 import { usePanes } from "@/lib/usePanes";
+import { useProviderKey } from "@/lib/useProviderKey";
 
 const EMPTY_RUN: PaneRunState = { runId: null, submitting: false, error: null };
 
@@ -16,6 +18,7 @@ export default function PlaygroundPage() {
 
   const [prompt, setPrompt] = useState("");
   const [runs, setRuns] = useState<Record<string, PaneRunState>>({});
+  const { key: providerKey, ready: keyReady } = useProviderKey();
 
   // One AbortController per pane. Cancelling a single pane must abort only its
   // own in-flight create request — a shared controller would take down every
@@ -122,6 +125,7 @@ export default function PlaygroundPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <ProviderKeyGate compact />
           <Button variant="secondary" size="sm" onClick={addPane} disabled={!canAdd}>
             <Plus />
             Add pane
@@ -133,6 +137,10 @@ export default function PlaygroundPage() {
           )}
         </div>
       </header>
+
+      {/* Nothing can run without a key, so ask for it before anything else
+          rather than letting someone write a prompt and then be refused. */}
+      {keyReady && !providerKey && <ProviderKeyGate />}
 
       {/* Panes above the composer so that adding a pane does not push the input
           off-screen, and so the eye lands on the results first. */}
@@ -174,7 +182,11 @@ export default function PlaygroundPage() {
           className="border-0 bg-transparent focus:ring-0"
         />
         <div className="mt-2 flex items-center gap-2">
-          <Button variant="primary" onClick={() => void runAll()} disabled={!prompt.trim()}>
+          <Button
+            variant="primary"
+            onClick={() => void runAll()}
+            disabled={!prompt.trim() || !providerKey}
+          >
             Run on {panes.length} {panes.length === 1 ? "pane" : "panes"}
           </Button>
           <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-subtle">

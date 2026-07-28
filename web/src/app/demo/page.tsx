@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { ProviderKeyGate } from "@/components/ProviderKeyGate";
 import { TraceTimeline } from "@/components/TraceTimeline";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, CardBody, Skeleton } from "@/components/ui/primitives";
 import { track } from "@/lib/analytics";
 import { STATUS_TONE, formatCost, formatDuration } from "@/lib/models";
 import type { RunStatus } from "@/lib/types";
+import { useProviderKey } from "@/lib/useProviderKey";
 import { useRunStream } from "@/lib/useRunStream";
 
 interface Example {
@@ -43,6 +45,7 @@ export default function DemoPage() {
   const [starting, setStarting] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const { key: providerKey, ready: keyReady } = useProviderKey();
 
   const loadRecent = useCallback(async () => {
     try {
@@ -70,7 +73,10 @@ export default function DemoPage() {
       try {
         const response = await fetch("/api/v1/demo/runs", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(providerKey ? { "X-Provider-Key": providerKey } : {}),
+          },
           body: JSON.stringify({ example_id: example.id }),
         });
         const body = await response.json();
@@ -91,7 +97,7 @@ export default function DemoPage() {
         setStarting(null);
       }
     },
-    [],
+    [providerKey],
   );
 
   const demoStreamUrl = useCallback((id: string) => `/api/v1/demo/runs/${id}/stream`, []);
@@ -107,9 +113,12 @@ export default function DemoPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Runbox, running</h1>
         <p className="text-muted">
           Pick an example. It runs in an isolated container with no network access, and
-          the trace streams back here as it happens. No signup.
+          the trace streams back here as it happens. No signup — bring your own model
+          key and you can see exactly what it costs.
         </p>
       </header>
+
+      {keyReady && !providerKey && <ProviderKeyGate />}
 
       <div className="grid gap-3 sm:grid-cols-3">
         {examples.length === 0
@@ -123,7 +132,7 @@ export default function DemoPage() {
                     variant="primary"
                     size="sm"
                     onClick={() => void start(example)}
-                    disabled={starting !== null || stream.isStreaming}
+                    disabled={starting !== null || stream.isStreaming || !providerKey}
                   >
                     {starting === example.id ? "Starting…" : "Run this"}
                   </Button>

@@ -137,6 +137,15 @@ Every run gets a container with `--network=none`, a read-only root filesystem, a
 user, and memory, CPU and pids limits. The wall-clock timeout is enforced by the
 runner, not by the container.
 
+Runbox holds **no model provider key**. Callers bring their own per run, sent in
+an `X-Provider-Key` header. It is never written to Postgres — it lives in a
+run-scoped Redis entry with a TTL and is deleted on read by the runner, so it
+normally exists for the second between enqueue and claim. It is then handed to
+the *proxy*, not into the sandbox, so the container running untrusted agent code
+never sees it. The honest limit, stated in the UI too: the key transits the
+server, so an operator with production access could capture it. That is true of
+every hosted BYOK product.
+
 `--network=none` is a real setting rather than one that gets quietly reverted
 the first time the agent needs an API. The container reaches the outside world
 through two unix sockets the runner controls

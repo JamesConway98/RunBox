@@ -127,3 +127,28 @@ func (q *Queue) CancelRequested(ctx context.Context, runID string) (bool, error)
 func (q *Queue) ClearCancel(ctx context.Context, runID string) error {
 	return q.rdb.SRem(ctx, CancelKey, runID).Err()
 }
+
+// ProviderKeyPrefix + run id holds the caller-supplied model provider key.
+// Written by the control plane, read exactly once by the runner.
+const ProviderKeyPrefix = "runbox:pkey:"
+
+// TakeProviderKey fetches and deletes a run's provider key in one round trip.
+//
+// GETDEL rather than GET followed by DEL: the key should exist for as long as
+// it takes one worker to claim the run and no longer, and a two-step read
+// leaves a window where a crash between them strands a credential in Redis
+// until its TTL expires.
+//
+// An empty result is not an error here. A run with no key is one the executor
+// will fail with a clear message, and that decision belongs to the executor
+// rather than to this transport-level call.
+func (q *Queue) TakeProviderKey(ctx context.Context, runID string) (string, error) {
+	key, err := q.rdb.GetDel(ctx, ProviderKeyPrefix+runID).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("take provider key: %w", err)
+	}
+	return key, nil
+}

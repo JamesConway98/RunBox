@@ -35,9 +35,9 @@ type Config struct {
 	AnthropicBaseURL string
 	AnthropicVersion string
 
-	// Optional. When unset the OpenAI upstream is simply not mounted, and a run
-	// against a gpt-* model fails with a clear error rather than a confusing
-	// 401 from somebody else's API.
+	// Both optional. Callers supply their own key per run; these are only a
+	// fallback for self-hosted deployments. When neither is set and no caller
+	// key arrives, the run fails with a clear message.
 	OpenAIAPIKey  string
 	OpenAIBaseURL string
 
@@ -85,9 +85,10 @@ func Load() (*Config, error) {
 	if c.Workers < 1 {
 		return nil, fmt.Errorf("RUNBOX_WORKERS must be at least 1, got %d", c.Workers)
 	}
-	if c.AnthropicAPIKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY is required")
-	}
+	// No provider key is required. Callers bring their own per run; a key set
+	// here is a fallback for self-hosted deployments that prefer to supply one
+	// centrally. A run that ends up with neither fails with a clear message
+	// rather than the process refusing to start.
 	return c, nil
 }
 

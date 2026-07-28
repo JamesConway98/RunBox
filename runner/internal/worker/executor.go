@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/JamesConway98/RunBox/runner/internal/config"
@@ -23,6 +24,13 @@ type Publisher interface {
 	Publish(ctx context.Context, runID string, event trace.Event) error
 }
 
+// KeyTaker hands over the caller-supplied provider key for a run, removing it
+// as it does. Separate from Publisher so the executor's dependency on Redis is
+// stated as two narrow capabilities rather than one broad client.
+type KeyTaker interface {
+	TakeProviderKey(ctx context.Context, runID string) (string, error)
+}
+
 type noopPublisher struct{}
 
 func (noopPublisher) Publish(context.Context, string, trace.Event) error { return nil }
@@ -34,16 +42,18 @@ type Executor struct {
 	store *store.Store
 	sbx   *sandbox.Sandbox
 	pub   Publisher
+	keys  KeyTaker
 	log   *slog.Logger
 }
 
 func NewExecutor(
-	cfg *config.Config, st *store.Store, sbx *sandbox.Sandbox, pub Publisher, log *slog.Logger,
+	cfg *config.Config, st *store.Store, sbx *sandbox.Sandbox,
+	pub Publisher, keys KeyTaker, log *slog.Logger,
 ) *Executor {
 	if pub == nil {
 		pub = noopPublisher{}
 	}
-	return &Executor{cfg: cfg, store: st, sbx: sbx, pub: pub, log: log}
+	return &Executor{cfg: cfg, store: st, sbx: sbx, pub: pub, keys: keys, log: log}
 }
 
 // Grace given to the agent between SIGTERM and SIGKILL, so a cancelled run can
@@ -100,15 +110,29 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 		}
 	}()
 
-	// Both providers are mounted when configured. Which one the agent talks to
-	// is decided by the model id, inside the sandbox — the proxy only decides
-	// what is reachable at all.
+	// The caller's own provider key, collected from Redis and removed as it is
+	// read. Runbox holds no key of its own; the configured ones below are a
+	// fallback for self-hosted deployments that want to supply one.
+	providerKey, err := e.providerKey(runCtx, run.ID)
+	if err != nil {
+		log.Error("no usable provider key", "err", err)
+		state.emitRunnerError(ctx, err.Error())
+		return e.finish(ctx, run.ID, store.Completion{
+			Status:     "failed",
+			Error:      err.Error(),
+			DurationMS: msSince(started),
+		})
+	}
+
+	// Both providers are mounted when a key is available for them. Which one the
+	// agent talks to is decided by the model id, inside the sandbox — the proxy
+	// only decides what is reachable at all.
 	llmProxy, err := proxy.StartLLM(socketDir, proxy.LLMConfig{
 		Upstreams: []proxy.Upstream{
 			proxy.AnthropicUpstream(
-				e.cfg.AnthropicBaseURL, e.cfg.AnthropicAPIKey, e.cfg.AnthropicVersion,
+				e.cfg.AnthropicBaseURL, providerKey.anthropic, e.cfg.AnthropicVersion,
 			),
-			proxy.OpenAIUpstream(e.cfg.OpenAIBaseURL, e.cfg.OpenAIAPIKey),
+			proxy.OpenAIUpstream(e.cfg.OpenAIBaseURL, providerKey.openai),
 		},
 	}, log)
 	if err != nil {
@@ -376,4 +400,57 @@ func (s *runState) resolve(
 
 func msSince(t time.Time) int {
 	return int(time.Since(t).Milliseconds())
+}
+
+// runKeys is which provider credentials this run may use.
+//
+// Both fields are usually empty except the one matching the run's model: a
+// caller supplies the key for the provider they are using, and mounting an
+// upstream with no key would give the agent a 401 from somebody else's API
+// instead of a clear refusal from ours.
+type runKeys struct {
+	anthropic string
+	openai    string
+}
+
+// providerKey resolves the credential for a run.
+//
+// The caller's own key wins. A key configured on the runner is a fallback for
+// self-hosted deployments that prefer to supply one centrally; the hosted
+// deployment sets neither, so a run without a caller key fails here rather than
+// silently spending somebody else's budget.
+func (e *Executor) providerKey(ctx context.Context, runID string) (runKeys, error) {
+	var supplied string
+	if e.keys != nil {
+		var err error
+		supplied, err = e.keys.TakeProviderKey(ctx, runID)
+		if err != nil {
+			// A Redis failure here is not the caller's fault, and retrying the
+			// run would be reasonable — but the key is gone either way, so
+			// failing with a clear reason beats hanging.
+			return runKeys{}, fmt.Errorf("could not read the provider key for this run: %w", err)
+		}
+	}
+
+	keys := runKeys{anthropic: e.cfg.AnthropicAPIKey, openai: e.cfg.OpenAIAPIKey}
+
+	if supplied != "" {
+		// Routed by prefix, matching the agent's own provider selection. The
+		// control plane already rejected a key that does not match the model,
+		// so this only has to place it.
+		switch {
+		case strings.HasPrefix(supplied, "sk-ant-"):
+			keys.anthropic = supplied
+		case strings.HasPrefix(supplied, "sk-"):
+			keys.openai = supplied
+		default:
+			return runKeys{}, fmt.Errorf("supplied provider key is not a recognised format")
+		}
+	}
+
+	if keys.anthropic == "" && keys.openai == "" {
+		return runKeys{}, fmt.Errorf(
+			"no provider key for this run: supply one in the X-Provider-Key header")
+	}
+	return keys, nil
 }

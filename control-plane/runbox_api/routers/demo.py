@@ -14,11 +14,11 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import ratelimit
+from .. import provider_keys, ratelimit
 from ..auth import get_db
 from ..bus import Bus
 from ..config import Settings
@@ -180,8 +180,27 @@ async def start_example(
     db: Annotated[Database, Depends(get_db)],
     bus: Annotated[Bus, Depends(get_bus)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
+    x_provider_key: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
-    """Run one of the fixed examples. Rate limited by IP."""
+    """Run one of the fixed examples, on the visitor's own provider key.
+
+    Bring-your-own-key is what makes an open demo affordable. It also removes
+    the reason the prompt menu is fixed — but the menu stays, because a public
+    endpoint that runs arbitrary text against a stranger's key is a good way to
+    become someone else's abuse problem.
+    """
+    key = provider_keys.parse(x_provider_key)
+    if key is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "provider_key_required",
+                "message": (
+                    "The demo runs on your own model provider key. Paste an Anthropic "
+                    "key to try it — it is never stored."
+                ),
+            },
+        )
     example = EXAMPLES_BY_ID.get(body.example_id)
     if example is None:
         raise HTTPException(
@@ -229,6 +248,9 @@ async def start_example(
         )
 
     run_id = str(row["id"])
+    provider_keys.require_match(key, example["model"])
+    await provider_keys.store(bus.redis, run_id, key)
+
     try:
         await bus.enqueue(run_id)
     except Exception:  # noqa: BLE001
