@@ -24,7 +24,11 @@ export interface PaneConfig {
   tools: string[];
 }
 
-const STORAGE_KEY = "runbox-playground-panes-v1";
+// v2: the default output ceiling came down from 20,000 tokens to 1,024. Panes
+// saved under v1 carry the old value, and clamping them to the maximum would
+// leave them at 20,000 — a ~$0.30 run on Sonnet, on the visitor's own key.
+// Bumping the key discards them so everyone actually gets the new default.
+const STORAGE_KEY = "runbox-playground-panes-v2";
 const MAX_PANES = 6;
 
 let paneCounter = 0;
@@ -65,6 +69,8 @@ function isPaneConfig(value: unknown): value is PaneConfig {
 
 function load(): PaneConfig[] | null {
   try {
+    // One-time cleanup of the superseded key.
+    localStorage.removeItem("runbox-playground-panes-v1");
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
@@ -76,10 +82,12 @@ function load(): PaneConfig[] | null {
       ...createPane(),
       ...pane,
       tools: Array.isArray(pane.tools) ? pane.tools.filter((t) => typeof t === "string") : [],
-      // Panes saved before the default came down would otherwise keep a 20,000
-      // ceiling forever, which is exactly the spend this change exists to stop.
+      // Still clamped, because the value is user-editable and a hand-typed
+      // number should not be able to exceed what the UI allows.
       maxTokens: Math.min(
-        typeof pane.maxTokens === "number" ? pane.maxTokens : DEFAULT_MAX_TOKENS,
+        typeof pane.maxTokens === "number" && pane.maxTokens > 0
+          ? pane.maxTokens
+          : DEFAULT_MAX_TOKENS,
         MAX_TOKENS_CEILING,
       ),
     }));

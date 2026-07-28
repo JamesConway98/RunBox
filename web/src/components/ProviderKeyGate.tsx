@@ -83,8 +83,7 @@ export function ProviderKeyGate({ compact = false }: { compact?: boolean }) {
         <div>
           <h2 className="text-sm font-medium">Your model provider key</h2>
           <p className="mt-1 text-xs text-muted">
-            Runbox does not supply one — runs execute on your own key, so you see
-            exactly what they cost on your provider bill.
+            Runs execute on your own key. Runbox never stores it.
           </p>
         </div>
 

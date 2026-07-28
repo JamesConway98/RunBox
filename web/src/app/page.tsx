@@ -127,11 +127,7 @@ export default function PlaygroundPage() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Playground</h1>
-          <p className="max-w-xl text-sm text-muted">
-            One prompt, every model, streaming side by side. Each pane runs in its own
-            sandboxed container and streams back independently — cancel one and the
-            others carry on.
-          </p>
+          <p className="text-sm text-muted">Compare models on the same prompt.</p>
         </div>
 
         <div className="flex items-center gap-2">
