@@ -14,6 +14,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/JamesConway98/RunBox/runner/internal/trace"
 )
 
 var ErrNoWork = errors.New("no queued runs")
@@ -131,19 +133,40 @@ func (s *Store) MarkRunning(ctx context.Context, id string) (bool, error) {
 	return tag.RowsAffected() == 1, nil
 }
 
-// AppendEvent writes one trace event. Conflicts on (run_id, seq) are ignored:
-// a retried write must never produce a duplicate in a stream clients resume
-// from by cursor.
-func (s *Store) AppendEvent(
-	ctx context.Context, runID, tenantID string, seq int, eventType string, payload []byte,
+// AppendEvents writes a batch of trace events in one round trip.
+//
+// unnest turns the parallel arrays into rows server side, so a hundred events
+// cost one statement rather than a hundred. That matters more than it looks:
+// every streamed token is an event, and against a database in another region a
+// per-event insert made a normal run spend most of its wall clock waiting on
+// the network.
+//
+// Conflicts on (run_id, seq) are still ignored, so a retried batch cannot put a
+// duplicate into a stream clients resume from by cursor.
+func (s *Store) AppendEvents(
+	ctx context.Context, runID, tenantID string, events []trace.Event,
 ) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	seqs := make([]int32, len(events))
+	types := make([]string, len(events))
+	payloads := make([][]byte, len(events))
+	for i, e := range events {
+		seqs[i] = int32(e.Seq)
+		types[i] = string(e.Type)
+		payloads[i] = e.Payload
+	}
+
 	const q = `
 		insert into trace_events (run_id, tenant_id, seq, type, payload)
-		values ($1, $2, $3, $4, $5)
+		select $1, $2, u.seq, u.type, u.payload
+		from unnest($3::int[], $4::text[], $5::jsonb[]) as u(seq, type, payload)
 		on conflict (run_id, seq) do nothing`
 
-	if _, err := s.pool.Exec(ctx, q, runID, tenantID, seq, eventType, payload); err != nil {
-		return fmt.Errorf("append event %d: %w", seq, err)
+	if _, err := s.pool.Exec(ctx, q, runID, tenantID, seqs, types, payloads); err != nil {
+		return fmt.Errorf("append %d events: %w", len(events), err)
 	}
 	return nil
 }

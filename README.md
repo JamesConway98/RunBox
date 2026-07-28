@@ -116,6 +116,14 @@ rounding down means systematically undercharging a fraction of a micro on every
 single run, which is the kind of thing found during an audit rather than during
 development.
 
+Trace writes are batched — 50ms or 100 rows, whichever comes first, flushed as
+one `unnest` insert. That is not a micro-optimisation. Every streamed token is
+a trace event, and the original per-event write cost ~115ms against a managed
+database in another region, so a 400-token run spent ~46s doing nothing but
+round trips. Measured against the real deployment: 200 events went from ~23s to
+0.97s. The lesson is the general one — a design verified only against localhost
+has an unexamined assumption in it.
+
 Usage is recorded for **every** terminal state, including timeout and cancel.
 The agent reports cumulative usage after each model turn rather than only at the
 end, which is what makes a killed run billable. A metering system that loses

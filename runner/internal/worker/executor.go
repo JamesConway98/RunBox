@@ -71,6 +71,16 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 	log.Info("run started", "timeout", timeout, "tools", run.Tools)
 
 	state := &runState{run: run, exec: e, log: log}
+	state.buf = newTraceBuffer(run.ID, run.TenantID, e.store, e.pub, log)
+	// Flushed on every path, including the early returns below. The last events
+	// of a failed run are exactly the ones worth having.
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		if err := state.buf.Close(closeCtx); err != nil {
+			log.Error("could not flush trace buffer", "err", err)
+		}
+	}()
 
 	// Per-run sockets. These are the container's only route out — it runs with
 	// --network=none, so without them it can reach nothing at all.
@@ -177,6 +187,15 @@ func (e *Executor) Execute(ctx context.Context, run *store.Run) error {
 
 	exitCode, waitErr := container.Wait(context.WithoutCancel(runCtx))
 
+	// Flush before resolving. The terminal state is derived from the final
+	// event, and the usage row is written from it — both would race the
+	// background ticker otherwise.
+	flushCtx, flushCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	if err := state.buf.Close(flushCtx); err != nil {
+		log.Error("could not flush trace buffer", "err", err)
+	}
+	flushCancel()
+
 	completion := state.resolve(runCtx, streamErr, waitErr, exitCode, started)
 
 	// Usage is recorded for every terminal state, including timeout and cancel.
@@ -250,6 +269,10 @@ type runState struct {
 	// behind.
 	lastUsage trace.Usage
 	toolCalls int
+
+	// buf batches trace writes. Nil only in tests that do not exercise
+	// persistence.
+	buf *traceBuffer
 }
 
 func (s *runState) onLine(ctx context.Context, line []byte) error {
@@ -291,17 +314,11 @@ func (s *runState) persist(ctx context.Context, event trace.Event) error {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
-	if err := s.exec.store.AppendEvent(
-		writeCtx, s.run.ID, s.run.TenantID, event.Seq, string(event.Type), event.Payload,
-	); err != nil {
-		// Losing the durable copy is worth failing the run for; the trace is
-		// the product.
+	// Buffered rather than written straight through. Losing the durable copy is
+	// still worth failing the run for — the trace is the product — so Add
+	// surfaces the first write error it saw.
+	if err := s.buf.Add(writeCtx, event); err != nil {
 		return fmt.Errorf("persist event %d: %w", event.Seq, err)
-	}
-
-	if err := s.exec.pub.Publish(writeCtx, s.run.ID, event); err != nil {
-		// Losing the live copy is not. The client will catch up on replay.
-		s.log.Warn("publish failed", "seq", event.Seq, "err", err)
 	}
 	return nil
 }
