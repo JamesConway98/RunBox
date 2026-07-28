@@ -19,11 +19,27 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$(mktemp -d)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
-echo "→ building runner (linux/amd64)"
+# Ask the box what it is rather than assuming. Graviton/ARM instances are the
+# cheapest sensible option on EC2, and shipping an amd64 binary to one fails
+# with "cannot execute binary file" — which does not obviously point at the
+# architecture.
+echo "→ detecting target architecture"
+REMOTE_ARCH="$(ssh "$TARGET" uname -m)"
+case "$REMOTE_ARCH" in
+  x86_64|amd64)  GOARCH=amd64 ;;
+  aarch64|arm64) GOARCH=arm64 ;;
+  *)
+    echo "unsupported architecture: $REMOTE_ARCH" >&2
+    exit 1
+    ;;
+esac
+echo "  $REMOTE_ARCH → GOARCH=$GOARCH"
+
+echo "→ building runner (linux/$GOARCH)"
 cd "$REPO_ROOT/runner"
 # CGO off for a static binary: the VM's glibc version stops being something we
 # have to care about.
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build \
   -trimpath \
   -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" \
   -o "$BUILD_DIR/runner" ./cmd/runner

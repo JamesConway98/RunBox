@@ -108,8 +108,24 @@ the control-plane venv you already have.
 ## 3. The runner VM
 
 Any VM with Docker. Size it for the worker pool: each agent container is capped
-at 512MB, so `RUNBOX_WORKERS=4` wants ~4GB of RAM. A Hetzner CX22 (2 vCPU, 4GB,
-~€3.79/mo) is comfortable; a 1GB droplet will OOM unless you drop to one worker.
+at 512MB, so `RUNBOX_WORKERS=4` wants ~4GB of RAM. A 1GB instance will OOM
+unless you drop to one worker, which rules out most free tiers.
+
+| | Spec | Monthly |
+|---|---|---|
+| Hetzner CX22 | 2 vCPU, 4GB, 20TB egress | ~€3.79 |
+| EC2 t3.medium | 2 vCPU, 4GB | ~$30 |
+| EC2 t4g.medium (arm64) | 2 vCPU, 4GB | ~$24 |
+| Lightsail 4GB | 2 vCPU, 4GB | ~$24 |
+
+Roughly 8x for an identical box. EC2 earns it if you are already in AWS and
+want IAM and VPC in one place; for a single box running one Go binary that is
+machinery you configure without using.
+
+Architecture does not matter — `deploy.sh` asks the box via `uname -m` and
+builds for amd64 or arm64 accordingly, so Graviton is fine. Assuming amd64 and
+shipping to a `t4g` fails with "cannot execute binary file", which does not
+obviously point at the architecture.
 
 ```bash
 scp -r deploy/runner-vm root@your-box:/tmp/
