@@ -9,7 +9,7 @@ FROM python:3.12-slim-bookworm
 
 # Dependencies first so the layer caches independently of the agent source.
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --require-hashes=false -r /tmp/requirements.txt \
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm -rf /root/.cache /tmp/requirements.txt
 
 # uid 10001 is arbitrary but fixed: the runner mounts the workspace with it.
