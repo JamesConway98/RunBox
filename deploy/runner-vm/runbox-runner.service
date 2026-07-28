@@ -23,6 +23,12 @@ After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
 
+# Never stop retrying. A database blip at 3am should not leave the runner dead
+# until someone notices in the morning. This is a [Unit] directive — systemd
+# ignores it under [Service] and only warns, so the default limit of five
+# starts in ten seconds silently applies instead.
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User=runbox
@@ -34,9 +40,6 @@ ExecStart=/opt/runbox/runner
 
 Restart=always
 RestartSec=5s
-# Do not give up. A database blip at 3am should not leave the runner dead until
-# someone notices in the morning.
-StartLimitIntervalSec=0
 
 # SIGTERM lets the pool drain in-flight runs; the executor's grace period plus
 # the longest permitted run needs to fit inside this, or a deploy kills work
