@@ -16,11 +16,17 @@ RUNBOX_USER=runbox
 INSTALL_DIR=/opt/runbox
 CONFIG_DIR=/etc/runbox
 SOCKET_DIR=/var/run/runbox-sockets
+SRC_DIR=/opt/runbox/src
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root." >&2
   exit 1
+fi
+
+echo "→ installing git"
+if ! command -v git >/dev/null; then
+  apt-get update -qq && apt-get install -y -qq git
 fi
 
 echo "→ installing docker"
@@ -60,6 +66,12 @@ d $SOCKET_DIR 0700 $RUNBOX_USER $RUNBOX_USER -
 EOF
 systemd-tmpfiles --create /etc/tmpfiles.d/runbox.conf
 
+echo "→ fetching source for the agent image build"
+# The agent image is built here rather than pulled from a registry. The only
+# consumer is this machine's Docker daemon, so a registry would move a file to
+# itself via the internet.
+bash "$SCRIPT_DIR/build-agent.sh" || echo "  (build-agent.sh failed — run it manually later)"
+
 echo "→ installing systemd unit"
 cp "$SCRIPT_DIR/runbox-runner.service" /etc/systemd/system/
 systemctl daemon-reload
@@ -75,6 +87,6 @@ fi
 
 echo
 echo "Done. Next:"
-echo "  1. edit $CONFIG_DIR/runner.env"
-echo "  2. ./deploy.sh  (from your laptop — builds and ships the binary)"
+echo "  1. edit $CONFIG_DIR/runner.env — the RUNBOX_AGENT_IMAGE id is printed above"
+echo "  2. ./deploy.sh root@this-box   (from your laptop — builds and ships the binary)"
 echo "  3. systemctl start runbox-runner"

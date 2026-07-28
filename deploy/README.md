@@ -105,31 +105,59 @@ control-plane/.venv/bin/python scripts/seed.py   # prints API keys once
 The migration runner uses asyncpg rather than psql, so the only prerequisite is
 the control-plane venv you already have.
 
-## 3. Agent image, pinned by digest
+## 3. The runner VM
 
-```bash
-TAG=$(git rev-parse --short HEAD)
-docker build -t ghcr.io/jamesconway98/runbox-agent:$TAG ./agent
-docker push ghcr.io/jamesconway98/runbox-agent:$TAG
-docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/jamesconway98/runbox-agent:$TAG
-```
-
-Put that `@sha256:...` in the VM's `runner.env`. A tag cannot answer "which code
-actually ran", which is the first question asked about any agent trace.
-
-## 4. The runner VM
+Any VM with Docker. Size it for the worker pool: each agent container is capped
+at 512MB, so `RUNBOX_WORKERS=4` wants ~4GB of RAM. A Hetzner CX22 (2 vCPU, 4GB,
+~€3.79/mo) is comfortable; a 1GB droplet will OOM unless you drop to one worker.
 
 ```bash
 scp -r deploy/runner-vm root@your-box:/tmp/
 ssh root@your-box 'bash /tmp/runner-vm/setup.sh'
-ssh root@your-box 'vi /etc/runbox/runner.env'    # fill in the required values
+```
 
+`setup.sh` installs git and Docker, creates an unprivileged `runbox` account,
+lays down the systemd unit, clones the repo and **builds the agent image on the
+box**. It prints an image id — put that in `runner.env`.
+
+```bash
+ssh root@your-box 'vi /etc/runbox/runner.env'   # DATABASE_URL, REDIS_URL,
+                                                # ANTHROPIC_API_KEY, RUNBOX_AGENT_IMAGE
 ./deploy/runner-vm/deploy.sh root@your-box
 ```
 
-`setup.sh` installs Docker, creates an unprivileged `runbox` account and
-installs the systemd unit. `deploy.sh` cross-compiles for linux/amd64 and ships
-the binary, so the VM never needs a Go toolchain.
+`deploy.sh` cross-compiles for linux/amd64 and ships the binary, so the VM never
+needs a Go toolchain.
+
+Use the **public** `DATABASE_URL` and `REDIS_URL` from Railway here — the VM is
+outside Railway's network, so `.railway.internal` will not resolve.
+
+### No registry, on purpose
+
+The agent image is built on the runner box rather than pushed to GHCR and pulled
+back. The only consumer of that image is this machine's Docker daemon, so a
+registry would move a file to itself via the internet, and add an account and a
+credential to do it.
+
+The cost is pinning by *image id* rather than registry digest. Both are
+immutable and both answer "which code actually ran", which is the first question
+asked about any agent trace. Add a registry when there is a second runner — not
+before.
+
+To update the agent later:
+
+```bash
+ssh root@your-box 'bash /opt/runbox/src/deploy/runner-vm/build-agent.sh'
+# put the new id in runner.env, then:
+ssh root@your-box 'systemctl restart runbox-runner'
+```
+
+## 4. Confirm it picked up work
+
+```bash
+ssh root@your-box 'journalctl -u runbox-runner -f'
+curl -s https://<your-api>/health     # queue_depth should drain to 0
+```
 
 The runner runs **natively, not in a container**, and that is deliberate. It
 creates unix sockets and bind-mounts them into each agent container; if the
