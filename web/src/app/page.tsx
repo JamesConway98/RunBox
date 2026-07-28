@@ -146,11 +146,11 @@ export default function PlaygroundPage() {
           off-screen, and so the eye lands on the results first. */}
       {!hydrated ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Skeleton className="h-[26rem] rounded-xl" />
-          <Skeleton className="h-[26rem] rounded-xl" />
+          <Skeleton className="h-80 rounded-xl" />
+          <Skeleton className="h-80 rounded-xl" />
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 pb-4 md:grid-cols-2 xl:grid-cols-3">
           {panes.map((pane, index) => (
             <PlaygroundPane
               key={pane.id}
@@ -167,7 +167,10 @@ export default function PlaygroundPage() {
         </div>
       )}
 
-      <div className="sticky bottom-4 rounded-xl border border-border bg-surface/95 p-3 backdrop-blur">
+      <div
+        className="sticky bottom-0 -mx-4 border-t border-border bg-bg px-4 py-3
+                   shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.25)]"
+      >
         <Textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -179,7 +182,7 @@ export default function PlaygroundPage() {
           }}
           rows={2}
           placeholder="Ask every pane the same thing…"
-          className="border-0 bg-transparent focus:ring-0"
+          className="border-border bg-surface"
         />
         <div className="mt-2 flex items-center gap-2">
           <Button

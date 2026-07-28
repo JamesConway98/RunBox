@@ -69,10 +69,11 @@ export const PlaygroundPane = memo(function PlaygroundPane({
   const cost = stream.usage?.cost_micros ?? 0;
 
   return (
-    <Card className="flex min-h-[26rem] flex-col">
+    <Card className="flex min-h-80 flex-col">
       <CardHeader className="gap-2">
         <Select value={pane.model} onValueChange={(model) => onUpdate({ model })}>
-          <SelectTrigger className="h-8 flex-1 border-0 bg-transparent px-1.5 font-medium">
+          <SelectTrigger className="h-8 flex-1 border-0 bg-transparent px-1.5 text-sm font-medium
+                                    hover:bg-raised">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -173,7 +174,8 @@ function PaneParams({
   disabled: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 border-b border-border px-3 py-2 text-xs">
+    <div className="flex items-center gap-3 border-b border-border bg-surface/60 px-3 py-1.5
+                    text-[11px]">
       <label className="flex items-center gap-1.5 text-muted">
         temp
         <input
@@ -264,9 +266,17 @@ function Transcript({
 
   if (!hasRun) {
     return (
-      <div className="grid h-full place-items-center p-6 text-center">
-        <p className="text-xs text-subtle">
-          Enter a prompt below and run it across every pane at once.
+      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+        <div
+          aria-hidden
+          className="flex gap-1 text-subtle/50"
+        >
+          <span className="h-1 w-8 rounded-full bg-current" />
+          <span className="h-1 w-5 rounded-full bg-current" />
+          <span className="h-1 w-6 rounded-full bg-current" />
+        </div>
+        <p className="max-w-[22ch] text-xs leading-relaxed text-subtle">
+          Output appears here as it streams.
         </p>
       </div>
     );

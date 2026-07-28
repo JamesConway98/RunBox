@@ -23,6 +23,18 @@ export function ProviderKeyGate({ compact = false }: { compact?: boolean }) {
   // Avoids a flash of the empty state before localStorage has been read.
   if (!ready) return null;
 
+  // Compact is a status indicator, never the form. It previously fell through
+  // to the full card, so the header and the page each rendered one and the
+  // screen showed the same panel twice.
+  if (compact && !key) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-muted">
+        <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+        no key set
+      </span>
+    );
+  }
+
   const submit = () => {
     const value = draft.trim();
     if (!value) return;
@@ -66,7 +78,7 @@ export function ProviderKeyGate({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <Card className={compact ? "" : "border-accent/40"}>
+    <Card className="border-accent/40">
       <CardBody className="space-y-3">
         <div>
           <h2 className="text-sm font-medium">Your model provider key</h2>

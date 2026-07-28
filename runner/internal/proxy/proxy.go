@@ -59,13 +59,27 @@ func listenUnix(path string) (net.Listener, error) {
 
 // RunDir creates the host-side directory holding one run's sockets.
 //
-// 0700 on the directory is where the actual protection is: only the runner can
-// traverse into it, so the permissive socket mode inside is not reachable by
-// anything else on the host.
+// 0711, not 0700. Connecting to a unix socket requires write permission on the
+// socket and *traverse* permission on its directory, and the agent runs as an
+// unrelated uid inside the container. With 0700 the socket was reachable only
+// in theory: every run failed with "[Errno 13] Permission denied" before it
+// reached the model.
+//
+// 0711 grants traverse without read, so the container can open a socket whose
+// name it already knows but cannot enumerate the directory. The real isolation
+// is one level up — the base directory is 0700 and owned by the runner, so
+// nothing else on the host can reach these paths at all. Inside the container
+// only this directory is mounted, and it contains nothing but its own sockets.
 func RunDir(base, runID string) (string, error) {
 	dir := filepath.Join(base, runID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o711); err != nil {
 		return "", fmt.Errorf("create socket dir: %w", err)
+	}
+	// MkdirAll honours the umask, which on a default Debian install strips the
+	// group and other bits and puts us straight back to 0700. Set the mode
+	// explicitly so the result does not depend on the runner's environment.
+	if err := os.Chmod(dir, 0o711); err != nil {
+		return "", fmt.Errorf("chmod socket dir: %w", err)
 	}
 	return dir, nil
 }

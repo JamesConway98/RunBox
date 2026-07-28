@@ -29,11 +29,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-bg/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-4">
-          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-6 place-items-center rounded-md bg-accent text-[11px] font-bold text-accent-fg">
-              R
-            </span>
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-5 px-4">
+          <Link
+            href="/"
+            className="shrink-0 text-[15px] font-semibold tracking-tight transition-colors
+                       hover:text-accent"
+          >
             Runbox
           </Link>
 
@@ -50,8 +51,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                    active ? "bg-raised font-medium text-fg" : "text-muted hover:text-fg",
+                    "relative whitespace-nowrap px-2.5 py-1.5 text-sm transition-colors",
+                    "after:absolute after:inset-x-2.5 after:-bottom-px after:h-px",
+                    active
+                      ? "font-medium text-fg after:bg-accent"
+                      : "text-muted hover:text-fg",
                   )}
                 >
                   {item.label}
