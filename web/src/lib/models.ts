@@ -77,6 +77,33 @@ export const MODELS_BY_ID = new Map(MODELS.map((m) => [m.id, m]));
 
 export const DEFAULT_MODEL = "claude-sonnet-5";
 
+/**
+ * Ceiling on output tokens for a new pane.
+ *
+ * Deliberately small. Runs execute on the visitor's own provider key, and
+ * output is the expensive half — 20,000 tokens on Sonnet is about $0.30 for a
+ * single run. 1,024 is a complete answer for anything you would type into a
+ * playground and caps the worst case near a cent. Anyone who needs more can
+ * raise it per pane.
+ */
+export const DEFAULT_MAX_TOKENS = 1024;
+
+/** What a pane will let you set, short of the API's own 200k limit. */
+export const MAX_TOKENS_CEILING = 32_000;
+
+/**
+ * The most a run can cost, given its token ceiling.
+ *
+ * Input is unknown until the prompt is sent, so this prices output only and is
+ * labelled as a ceiling rather than an estimate. Being wrong in the direction
+ * of "cheaper than advertised" is the only acceptable direction here.
+ */
+export function maxCostMicros(modelId: string, maxTokens: number): number {
+  const model = MODELS_BY_ID.get(modelId);
+  if (!model) return 0;
+  return Math.ceil((maxTokens * model.outputMicrosPer1k) / 1000);
+}
+
 export const AVAILABLE_TOOLS = [
   { id: "http_get", label: "http_get", blurb: "Fetch a URL through the allowlisting proxy" },
   { id: "read_file", label: "read_file", blurb: "Read a file from the run workspace" },

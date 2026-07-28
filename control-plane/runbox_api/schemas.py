@@ -20,7 +20,11 @@ class CreateRunRequest(BaseModel):
     system_prompt: str | None = Field(default=None, max_length=10_000)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_s: int = Field(default=120, ge=1, le=600)
-    max_tokens: int = Field(default=20_000, ge=256, le=200_000)
+    # 1024, not 20,000. This is a ceiling on *output* tokens, and output is the
+    # expensive half — 20k on Sonnet is ~$0.30 for one run, which is a lot to
+    # spend by accident on a key that is not the platform's. Callers who want
+    # more can ask; the ceiling below still allows it.
+    max_tokens: int = Field(default=1024, ge=64, le=200_000)
 
     @field_validator("task")
     @classmethod

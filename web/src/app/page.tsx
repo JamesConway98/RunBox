@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Skeleton, Textarea } from "@/components/ui/primitives";
 import { track } from "@/lib/analytics";
 import { ApiError, api } from "@/lib/api";
+import { formatCost, maxCostMicros } from "@/lib/models";
 import { usePanes } from "@/lib/usePanes";
 import { useProviderKey } from "@/lib/useProviderKey";
 
@@ -114,13 +115,22 @@ export default function PlaygroundPage() {
     [panes, runs],
   );
 
+  // One prompt fans out to every pane, so the number that matters is the sum,
+  // not the per-pane figure. Shown before the run, on the button's own row.
+  const ceilingMicros = useMemo(
+    () => panes.reduce((sum, p) => sum + maxCostMicros(p.model, p.maxTokens), 0),
+    [panes],
+  );
+
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Playground</h1>
-          <p className="text-sm text-muted">
-            One prompt, every pane, streaming at once.
+          <p className="max-w-xl text-sm text-muted">
+            One prompt, every model, streaming side by side. Each pane runs in its own
+            sandboxed container and streams back independently — cancel one and the
+            others carry on.
           </p>
         </div>
 
@@ -184,7 +194,7 @@ export default function PlaygroundPage() {
           placeholder="Ask every pane the same thing…"
           className="border-border bg-surface"
         />
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <Button
             variant="primary"
             onClick={() => void runAll()}
@@ -195,6 +205,19 @@ export default function PlaygroundPage() {
           <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-subtle">
             ⌘↵
           </kbd>
+
+          {/* Say why the button is disabled rather than leaving it greyed and
+              unexplained — the commonest reason is simply no key yet. */}
+          {!providerKey ? (
+            <span className="text-xs text-warning">Add your provider key to run.</span>
+          ) : (
+            <span className="text-xs text-subtle">
+              at most{" "}
+              <span className="font-mono text-muted">{formatCost(ceilingMicros)}</span>{" "}
+              across {panes.length} {panes.length === 1 ? "pane" : "panes"} · charged to
+              your own key
+            </span>
+          )}
         </div>
       </div>
     </div>

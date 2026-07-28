@@ -148,7 +148,7 @@ class _Runs:
         system_prompt: str | None = None,
         temperature: float | None = None,
         timeout_s: int = 120,
-        max_tokens: int = 20_000,
+        max_tokens: int = 1024,
     ) -> Run:
         body: dict[str, Any] = {
             "task": task,

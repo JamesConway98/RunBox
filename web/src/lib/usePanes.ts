@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { track } from "./analytics";
-import { DEFAULT_MODEL, MODELS } from "./models";
+import { DEFAULT_MAX_TOKENS, DEFAULT_MODEL, MAX_TOKENS_CEILING, MODELS } from "./models";
 
 /**
  * Playground pane configuration, persisted across navigation and reload.
@@ -41,7 +41,7 @@ export function createPane(overrides: Partial<PaneConfig> = {}): PaneConfig {
     id: nextPaneId(),
     model: DEFAULT_MODEL,
     temperature: null,
-    maxTokens: 20_000,
+    maxTokens: DEFAULT_MAX_TOKENS,
     systemPrompt: "",
     tools: ["http_get"],
     ...overrides,
@@ -76,6 +76,12 @@ function load(): PaneConfig[] | null {
       ...createPane(),
       ...pane,
       tools: Array.isArray(pane.tools) ? pane.tools.filter((t) => typeof t === "string") : [],
+      // Panes saved before the default came down would otherwise keep a 20,000
+      // ceiling forever, which is exactly the spend this change exists to stop.
+      maxTokens: Math.min(
+        typeof pane.maxTokens === "number" ? pane.maxTokens : DEFAULT_MAX_TOKENS,
+        MAX_TOKENS_CEILING,
+      ),
     }));
     return panes.length > 0 ? panes.slice(0, MAX_PANES) : null;
   } catch {

@@ -17,7 +17,15 @@ import {
   X,
 } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { MODELS, MODELS_BY_ID, STATUS_TONE, formatCost, formatTokens } from "@/lib/models";
+import {
+  DEFAULT_MAX_TOKENS,
+  MAX_TOKENS_CEILING,
+  MODELS,
+  STATUS_TONE,
+  formatCost,
+  formatTokens,
+  maxCostMicros,
+} from "@/lib/models";
 import type { TracePayload } from "@/lib/types";
 import type { PaneConfig } from "@/lib/usePanes";
 import { type Segment, useRunStream } from "@/lib/useRunStream";
@@ -62,7 +70,6 @@ export const PlaygroundPane = memo(function PlaygroundPane({
   onCancel,
 }: Props) {
   const stream = useRunStream({ runId: run.runId });
-  const model = MODELS_BY_ID.get(pane.model);
 
   const inputTokens = stream.usage?.input_tokens ?? 0;
   const outputTokens = stream.usage?.output_tokens ?? 0;
@@ -141,28 +148,53 @@ export const PlaygroundPane = memo(function PlaygroundPane({
       </CardBody>
 
       <footer
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-3 py-1.5
-                   font-mono text-[11px] text-subtle"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-3 py-1.5
+                   text-[11px] text-subtle"
       >
-        <span title="input → output tokens">
-          {formatTokens(inputTokens)} → {formatTokens(outputTokens)}
-        </span>
-        <span title="cost so far">{formatCost(cost)}</span>
+        <Stat label="in" value={formatTokens(inputTokens)} />
+        <Stat label="out" value={formatTokens(outputTokens)} />
+        <Stat
+          label="cost"
+          value={formatCost(cost)}
+          tone={cost > 0 ? "text-fg" : undefined}
+        />
         {stream.latencyToFirstTokenMs !== null && (
-          <span title="latency to first token">
-            {Math.round(stream.latencyToFirstTokenMs)}ms ttft
+          <Stat label="first token" value={`${Math.round(stream.latencyToFirstTokenMs)}ms`} />
+        )}
+
+        <span className="ml-auto flex items-center gap-3">
+          {/* The ceiling, not a guess. Someone spending their own key should be
+              able to see the worst case before they press Run. */}
+          <span title={`This pane will not spend more than this on output`}>
+            max {formatCost(maxCostMicros(pane.model, pane.maxTokens))}
           </span>
-        )}
-        {model && <span className="ml-auto truncate">{model.provider}</span>}
-        {stream.isStreaming && (
-          <Button variant="subtle" size="sm" className="h-6 px-2" onClick={onCancel}>
-            Cancel
-          </Button>
-        )}
+          {stream.isStreaming && (
+            <Button variant="subtle" size="sm" className="h-6 px-2" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </span>
       </footer>
     </Card>
   );
 });
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <span className="flex items-baseline gap-1">
+      <span className="text-subtle/70">{label}</span>
+      <span className={cn("font-mono tabular-nums", tone)}>{value}</span>
+    </span>
+  );
+}
 
 function PaneParams({
   pane,
@@ -196,11 +228,11 @@ function PaneParams({
         max
         <input
           type="number"
-          min={256}
-          max={200_000}
+          min={64}
+          max={MAX_TOKENS_CEILING}
           step={1000}
           value={pane.maxTokens}
-          onChange={(e) => onUpdate({ maxTokens: Number(e.target.value) || 20_000 })}
+          onChange={(e) => onUpdate({ maxTokens: Number(e.target.value) || DEFAULT_MAX_TOKENS })}
           disabled={disabled}
           className="w-16 rounded border border-border bg-bg px-1 py-0.5 font-mono
                      tabular-nums disabled:opacity-40"
