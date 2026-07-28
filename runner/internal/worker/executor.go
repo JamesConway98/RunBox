@@ -294,6 +294,15 @@ type runState struct {
 	lastUsage trace.Usage
 	toolCalls int
 
+	// lastError is the most recent error the agent reported.
+	//
+	// The agent's final event carries a status but no reason, so without this
+	// a run that died on a provider 401 lands in the runs list as "failed" with
+	// an empty error column — the explanation visible only to someone who
+	// thinks to open the trace. The reason is right there in the stream; it
+	// just has to be carried across.
+	lastError string
+
 	// buf batches trace writes. Nil only in tests that do not exercise
 	// persistence.
 	buf *traceBuffer
@@ -319,6 +328,11 @@ func (s *runState) onLine(ctx context.Context, line []byte) error {
 			s.lastUsage = usage
 		} else {
 			s.log.Warn("undecodable usage event", "seq", event.Seq, "err", err)
+		}
+
+	case trace.TypeError:
+		if payload, err := event.DecodeError(); err == nil && payload.Message != "" {
+			s.lastError = payload.Message
 		}
 
 	case trace.TypeFinal:
@@ -375,6 +389,16 @@ func (s *runState) resolve(
 		c.Result = s.final.Result
 		if c.Status == "" {
 			c.Status = "succeeded"
+		}
+		// The final event says *that* it failed; the error event before it says
+		// why. Only the pair together is any use to someone reading the runs
+		// list, so a terminal status other than success takes the reason with
+		// it.
+		if c.Status != "succeeded" {
+			c.Error = s.lastError
+			if c.Error == "" {
+				c.Error = "agent reported " + c.Status + " without an error"
+			}
 		}
 
 	case streamErr != nil:

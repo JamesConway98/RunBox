@@ -44,6 +44,17 @@ type Final struct {
 	Usage  Usage  `json:"usage"`
 }
 
+// ErrorPayload is an error event's payload.
+//
+// `source` distinguishes a failure the agent hit (a provider 401, a tool that
+// raised) from one the runner detected around it. Both belong in the same
+// stream; only the agent's are worth quoting back as the run's reason.
+type ErrorPayload struct {
+	Message   string `json:"message"`
+	Source    string `json:"source"`
+	Retryable bool   `json:"retryable"`
+}
+
 // Parse turns one line of agent stdout into an Event with the given seq.
 //
 // A malformed line is an error the caller records as an error event and moves
@@ -94,6 +105,18 @@ func (e Event) DecodeFinal() (Final, error) {
 		return f, fmt.Errorf("decode final: %w", err)
 	}
 	return f, nil
+}
+
+// DecodeError extracts the message from an error event.
+func (e Event) DecodeError() (ErrorPayload, error) {
+	var p ErrorPayload
+	if e.Type != TypeError {
+		return p, fmt.Errorf("event %d is %s, not error", e.Seq, e.Type)
+	}
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return p, fmt.Errorf("decode error: %w", err)
+	}
+	return p, nil
 }
 
 // ErrorEvent builds a synthetic error event for problems the runner itself
