@@ -16,9 +16,9 @@ import type {
   TraceEvent,
 } from "./types";
 
-// Requests go to /api/*, which Next rewrites to the control plane. Same origin
-// means EventSource works without CORS preflight and the API key never has to
-// be exposed to the browser in a deployed setup.
+// Requests go to /api/*, which `app/api/[...path]/route.ts` forwards to the
+// control plane with the Runbox API key attached. Same origin means EventSource
+// works without CORS preflight, and the key stays on the server.
 const BASE = "/api";
 
 export class ApiError extends Error {
