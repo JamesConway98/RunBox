@@ -18,9 +18,10 @@ import {
 } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
 import {
-  DEFAULT_MAX_TOKENS,
   MAX_TOKENS_CEILING,
+  MIN_MAX_TOKENS,
   MODELS,
+  clampMaxTokens,
   STATUS_TONE,
   formatCost,
   formatTokens,
@@ -228,11 +229,19 @@ function PaneParams({
         max
         <input
           type="number"
-          min={64}
+          min={MIN_MAX_TOKENS}
           max={MAX_TOKENS_CEILING}
           step={1000}
           value={pane.maxTokens}
-          onChange={(e) => onUpdate({ maxTokens: Number(e.target.value) || DEFAULT_MAX_TOKENS })}
+          // Typing is left alone and the value is clamped on the way out.
+          // Clamping per keystroke makes the field unusable: typing "1000"
+          // becomes "1", which snaps to the floor before the second digit
+          // arrives.
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next) && next > 0) onUpdate({ maxTokens: next });
+          }}
+          onBlur={(e) => onUpdate({ maxTokens: clampMaxTokens(Number(e.target.value)) })}
           disabled={disabled}
           className="w-16 rounded border border-border bg-bg px-1 py-0.5 font-mono
                      tabular-nums disabled:opacity-40"

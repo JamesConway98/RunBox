@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Skeleton, Textarea } from "@/components/ui/primitives";
 import { track } from "@/lib/analytics";
 import { ApiError, api } from "@/lib/api";
-import { formatCost, maxCostMicros } from "@/lib/models";
+import { clampMaxTokens, formatCost, maxCostMicros } from "@/lib/models";
 import { usePanes } from "@/lib/usePanes";
 import { useProviderKey } from "@/lib/useProviderKey";
 
@@ -61,7 +61,10 @@ export default function PlaygroundPage() {
               tools: pane.tools,
               system_prompt: pane.systemPrompt || null,
               temperature: pane.temperature,
-              max_tokens: pane.maxTokens,
+              // Clamped again here, not only on blur. Pressing ⌘↵ from the
+              // composer never blurs the token field, so a value typed and left
+              // sitting there would otherwise reach the API and come back a 422.
+              max_tokens: clampMaxTokens(pane.maxTokens),
             },
             controller.signal,
           );

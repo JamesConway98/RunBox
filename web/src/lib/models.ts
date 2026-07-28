@@ -92,6 +92,24 @@ export const DEFAULT_MAX_TOKENS = 1024;
 export const MAX_TOKENS_CEILING = 32_000;
 
 /**
+ * The API's floor, mirrored.
+ *
+ * `CreateRunRequest.max_tokens` is `ge=64`, so anything below it is rejected
+ * before a container is ever started. The number is duplicated here rather than
+ * fetched because the alternative — finding out on submit — is what produced
+ * "The request body or query parameters are invalid." for anyone who typed a
+ * small number into a field whose `min` attribute the browser treats as
+ * advisory.
+ */
+export const MIN_MAX_TOKENS = 64;
+
+/** Bring a token ceiling inside what the API will accept. */
+export function clampMaxTokens(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MAX_TOKENS;
+  return Math.min(Math.max(Math.round(value), MIN_MAX_TOKENS), MAX_TOKENS_CEILING);
+}
+
+/**
  * The most a run can cost, given its token ceiling.
  *
  * Input is unknown until the prompt is sent, so this prices output only and is

@@ -27,12 +27,38 @@ export class ApiError extends Error {
   readonly detail: Record<string, unknown> | null;
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.message);
+    super(withIssues(body));
     this.name = "ApiError";
     this.status = status;
     this.code = body.error;
     this.detail = body.detail ?? null;
   }
+}
+
+/**
+ * Fold a validation failure's field-level issues into the message.
+ *
+ * The API's 422 message is deliberately generic — "The request body or query
+ * parameters are invalid." — and puts the specifics in `detail.issues`. Every
+ * caller here renders `error.message`, so without this the UI reported that
+ * something was wrong and refused to say what, while the answer sat one field
+ * away in the same response.
+ *
+ * Done in the constructor rather than at each call site so it holds for every
+ * request, including ones written later.
+ */
+function withIssues(body: ApiErrorBody): string {
+  const issues = (body.detail as { issues?: { field?: string; problem?: string }[] } | undefined)
+    ?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return body.message;
+
+  const described = issues
+    .map((issue) => (issue.field ? `${issue.field}: ${issue.problem}` : issue.problem))
+    .filter(Boolean);
+  if (described.length === 0) return body.message;
+
+  // The generic sentence adds nothing once the specifics are here.
+  return described.join("; ");
 }
 
 interface RequestOptions extends Omit<RequestInit, "body"> {
